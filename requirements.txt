@@ -1,0 +1,6 @@
+dateutils
+pandas
+jinja2
+seaborn
+yfinance
+shiny_validate
