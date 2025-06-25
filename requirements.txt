@@ -1,9 +1,9 @@
-dateutils
-pandas
-jinja2
-shinywidgets
-yfinance
-shiny_validate
 humanize
+jinja2
+pandas
+python-dateutil
 quantmod
-plotly
+shiny
+#shinywidgets
+shiny_validate
+yfinance
