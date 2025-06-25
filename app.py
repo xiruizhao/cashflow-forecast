@@ -1,15 +1,20 @@
 from shiny import App, render, ui, reactive, req
+#from shinywidgets import output_widget, render_plotly
+from shiny_validate import InputValidator, check
 from dateutil import rrule
 from datetime import date, datetime
+import calendar
+import humanize
 import pandas as pd
 import yfinance as yf
-from shiny_validate import InputValidator, check
-
+import quantmod.charts
+from pathlib import Path
+from io import StringIO
 # import plotly.express as px
-import seaborn as sns
 
-# from shinywidgets import render_plotly
-import calendar
+question_circle_fill = ui.HTML(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-question-circle-fill mb-1" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM5.496 6.033h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286a.237.237 0 0 0 .241.247zm2.325 6.443c.61 0 1.029-.394 1.029-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94 0 .533.425.927 1.01.927z"/></svg>'
+)
 
 FREQ_STR_TO_ENUM = {
     "DAILY": rrule.DAILY,
@@ -73,30 +78,33 @@ def generate_rrule(
                 RRULE += f";BYMONTH={bymonth_yearly};BYMONTHDAY={bymonthday_yearly}"
         # nothing for DAILY
         if end == "UNTIL":
-            RRULE += f";UNTIL={until}"
+            RRULE += ";UNTIL=" + until.strftime("%Y%m%dT0000Z")
         elif end == "COUNT":
             RRULE += f";COUNT={count}"
         return RRULE
 
 
-def generate_occurences(
-    row: pd.Series, after: datetime, before: datetime
-) -> list[date]:
+def generate_occurences(row: pd.Series, after: datetime, before: datetime) -> list[str]:
     # row["rrule"] and row["dtstart"] are str
     return [
-        dt.date()
+        dt.date().isoformat()
         for dt in rrule.rrulestr(
-            row["rrule"], dtstart=datetime.fromisoformat(row["dtstart"])
+            row["rrule"], dtstart=datetime.fromisoformat(row["dtstart"]), ignoretz=True
         ).between(after, before, inc=True)
     ]
 
 
 def split_account(account: str) -> list[dict[str, int]]:
     # format:
-    # checking:+1; savings:+2
+    # checking+1 savings-2
     res = {}
-    for acc_amt in account.split("; "):
-        acc, amt = acc_amt.split(":")
+    for acc_amt in account.split():
+        acc_amt = acc_amt.split("+")
+        if len(acc_amt) == 2:
+            acc, amt = acc_amt
+        else:
+            acc, amt = acc_amt[0].split("-")
+            amt = "-" + amt
         res[acc] = int(amt)
     return res
 
@@ -105,7 +113,7 @@ def get_stock_price(symbol: str) -> int:
     # _cache = {} TODO
     try:
         return int(yf.Ticker(symbol).history(period="1d")["Close"].iloc[-1])
-    except:
+    except (TypeError, ValueError):
         return 0
 
 
@@ -121,13 +129,30 @@ def generate_forecast(
         lambda row: generate_occurences(row, after, before),
         axis=1,
     )
-
     cfs = cfs.drop(["dtstart", "rrule"], axis=1).explode("date")
+    cfs = cfs[cfs["date"].notna()]
+
+    # 2. process *_override
+    regular = cfs[~cfs["desc"].str.endswith("_override")].reset_index(drop=True)
+    overrides = cfs[cfs["desc"].str.endswith("_override")]
+
+    def process_override(row: pd.Series) -> pd.Series:
+        row["desc"] = row["desc"].removesuffix("_override")
+        regular.drop(
+            regular.index[
+                (regular["desc"] == row["desc"]) & (regular["date"] == row["date"])
+            ],
+            inplace=True,
+        )
+        return row
+
+    cfs = pd.concat([regular, overrides.apply(process_override, axis=1)], axis=0)
+
+    # 3. concat desc_account on date
     cfs["desc_account"] = cfs["desc"].str.cat(cfs["account"], sep=": ")
-    # 2. concat desc_account on date
     cfs_desc_account = cfs.groupby("date")["desc_account"].apply("; ".join)
 
-    # 3. calculate amount on date
+    # 4. calculate amount on date
     cfs.drop("desc_account", axis=1, inplace=True)
     cfs["account"] = cfs["account"].map(split_account)
     cfs = (
@@ -142,10 +167,13 @@ def generate_forecast(
         .set_index("date")
     )
     cfs["desc"] = cfs_desc_account
-    # Convert stock shares to prices
+
+    # 5. convert stock shares to prices
     for column in cfs:
         if column.startswith("$"):
             cfs[column] *= stock_price
+            break
+    cfs.to_csv(Path(__file__).parent / "forecast.csv")
     return cfs.reset_index()
 
 
@@ -264,6 +292,7 @@ repeat_end_ui = ui.TagList(
         ui.input_numeric("count", None, "1"),
     ),
 )
+
 repeat_ui = ui.TagList(
     ui.panel_conditional(
         "!input.advanced_repeat",
@@ -280,7 +309,6 @@ repeat_ui = ui.TagList(
         ),
         ui.panel_conditional(
             "[ 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY' ].includes( input.freq )",
-            # TODO manually inline
             ui.row(
                 ui.div("every", style="width:33%;"),
                 ui.input_numeric("interval", None, "1", width="33%"),
@@ -303,9 +331,9 @@ repeat_ui = ui.TagList(
 
 account_ui = ui.TagList(
     ui.row(
-        ui.input_action_button("add_account_ui", "Add another account", width="50%"),
+        ui.input_action_button("add_account_ui", "+ account", width="50%"),
         ui.input_action_button(
-            "delete_account_ui", "Delete previous account", disabled=True, width="50%"
+            "delete_account_ui", "- account", disabled=True, width="50%"
         ),
         id="add_delete_account_ui",
     ),
@@ -313,82 +341,121 @@ account_ui = ui.TagList(
 
 app_ui = ui.page_fluid(
     ui.layout_columns(
-        ui.card(
-            ui.card_header("Add a Cash Flow Series"),
-            ui.input_text("desc", "Description", placeholder="current"),
-            account_ui,
-            ui.input_date("dtstart", "Start Date"),
-            repeat_ui,
-            ui.hr(),
-            ui.input_action_button("add_cashflow_series", "Add the cash flow series"),
+        ui.accordion(
+            ui.accordion_panel(
+                "Add a Cash Flow Series",
+                ui.input_text(
+                    "desc",
+                    ui.popover(
+                        ui.span("Description ", question_circle_fill),
+                        "`balance` is a required special description that sets the forecast start date. "
+                        "`*_override`s are special descriptions that override specific dates of the prefix description.",
+                    ),
+                    placeholder="balance",
+                ),
+                ui.help_text(),
+                account_ui,
+                ui.input_date("dtstart", "Start Date"),
+                repeat_ui,
+                ui.hr(),
+                ui.input_action_button("add_cashflow_series", "Submit"),
+            )
         ),
-        ui.card(
-            ui.card_header("Added Cash Flow Series"),
-            ui.output_data_frame("show_cashflow_series"),
-            ui.row(
-                ui.input_action_button(
-                    "save_cashflow_series_edits",
-                    "Save Cash Flow Series Edits",
-                    width="50%",
+        ui.accordion(
+            ui.accordion_panel(
+                "Cash Flow Series",
+                ui.output_data_frame("show_cashflow_series"),
+                ui.row(
+                    ui.input_action_button(
+                        "save_cashflow_series_edits",
+                        "Save Edits",
+                        width="25%",
+                    ),
+                    ui.input_action_button(
+                        "discard_cashflow_series_edits",
+                        "Discard Edits",
+                        width="25%",
+                        disabled=True,
+                    ),
+                    ui.input_action_button(
+                        "delete_cashflow_series",
+                        "Delete Selected",
+                        width="25%",
+                    ),
+                    ui.input_action_button(
+                        "delete_all_cashflow_series",
+                        "Delete All",
+                        width="25%",
+                    ),
                 ),
-                ui.download_button(
-                    "download_cashflow_series",
-                    "Download All Cash Flow Series",
-                    width="50%",
+                ui.p(),
+                ui.row(
+                    ui.input_file(
+                        "upload_cashflow_series",
+                        None,
+                        button_label="Upload",
+                        accept=[".csv"],
+                        width="50%",
+                    ),
+                    ui.download_button(
+                        "download_cashflow_series",
+                        "Download",
+                        width="50%",
+                    ),
                 ),
-            ),
-            ui.row(
-                ui.input_action_button(
-                    "delete_cashflow_series",
-                    "Delete Selected Cash Flow Series",
-                    width="50%",
-                ),
-                ui.input_action_button(
-                    "delete_all_cashflow_series",
-                    "Delete All Cash Flow Series",
-                    width="50%",
-                ),
-            ),
-            ui.input_file(
-                "upload_cashflow_series", "Upload Cash Flow Series", accept=[".csv"]
             ),
         ),
-        ui.card(
-            ui.card_header("Cash Flow Forecast"),
-            ui.row(
-                ui.input_date(
-                    "forecast_dtend",
-                    "Forecast End Date",
-                    value=(date.today() + pd.DateOffset(years=2)).date(),
-                    startview="year",
-                    width="50%",
+        ui.accordion(
+            ui.accordion_panel(
+                "Cash Flow Forecast",
+                ui.row(
+                    ui.output_text("show_forecast_dtstart"),
+                    ui.input_date(
+                        "forecast_dtend",
+                        "Forecast End Date",
+                        value=(date.today() + pd.DateOffset(years=2)).date(),
+                        startview="year",
+                        width="50%",
+                    ),
+                    # humanize.naturaltime(datetime.from)
+                    ui.input_switch("forecast_graph", "Graph", width="50%"),
                 ),
-                ui.input_switch(
-                    "forecast_graph", "Show Forecast as Graph", width="50%"
+                ui.panel_conditional(
+                    "!input.forecast_graph",
+                    ui.output_data_frame("cashflow_forecast_table"),
                 ),
-            ),
-            ui.panel_conditional(
-                "!input.forecast_graph",
-                ui.output_data_frame("cashflow_forecast_table"),
-            ),
-            ui.panel_conditional(
-                "input.forecast_graph",
-                ui.output_plot("cashflow_forecast_graph"),
-            ),
-            ui.input_numeric(
-                "set_stock_price",
-                "Set Stock Price",
-                0,
-            ),
+                ui.panel_conditional(
+                    "input.forecast_graph",
+                    #output_widget("cashflow_forecast_graph"),
+                    ui.output_ui("cashflow_forecast_graph"),
+                ),
+                ui.input_numeric(
+                    "set_stock_price",
+                    "Set Stock Price",
+                    0,
+                ),
+                ui.help_text("default is last day close price"),
+            )
         ),
         col_widths=(2, 4, 6),
+    ),
+    ui.tags.footer(
+        "Disclaimer: Your data will be lost when you reload the page. Please download to save them."
     ),
     title="Cash Flow Forecast",
 )
 
 
+def validate_rrule(rrulestr: str | None) -> str | None:
+    try:
+        rrule.rrulestr(rrulestr)
+    except (TypeError, ValueError):
+        return "invalid RRULE"
+    return None
+
+
 def server(input, output, session):
-    account_ui_counter = reactive.value(0) # TODO not actually a reactive value
+    account_ui_counter = reactive.value((0, 0))  # prev, curr
     cashflow_series = reactive.value(
         pd.DataFrame(columns=["desc", "account", "dtstart", "rrule"])
     )
@@ -406,17 +473,28 @@ def server(input, output, session):
     # cfs_validator.add_rule("bysetpos_yearly", check.required())
     # cfs_validator.add_rule("byweekday_yearly, check.required())
     # cfs_validator.add_rule("bymonth_setpos_yearly, check.required())
-
     rrule_validator = InputValidator()
-
-    def validate_rrule(rrulestr: str | None) -> str | None:
-        try:
-            rrule.rrulestr(rrulestr)
-        except (TypeError, ValueError):
-            return "invalid RRULE"
-        return None
-
     rrule_validator.add_rule("custom_rrule", validate_rrule)
+
+    @reactive.calc
+    def forecast_dtstart() -> pd.Series:
+        cfs = cashflow_series()
+        return cfs[cfs["desc"] == "balance"]["dtstart"]
+
+    @render.text
+    def show_forecast_dtstart():
+        dtstart = forecast_dtstart()
+        if len(dtstart) == 0:
+            return "Please add a balance to set forecast start date"
+        return (
+            "Forecast Start Date: "
+            + dtstart.iloc[0]
+            + " "
+            + humanize.naturaltime(
+                datetime.fromisoformat(dtstart.iloc[0]),
+                when=datetime.fromordinal(date.today().toordinal()),
+            )
+        )
 
     @reactive.effect
     def update_bymonthday_yearly():
@@ -461,16 +539,17 @@ def server(input, output, session):
                 input.until(),
                 input.count(),
             )
-        acc_amt = f"{input.account1()}:{input.amount1():+}"
-        for i in range(2, account_ui_counter() + 1):
-            acc = getattr(input, f"account{i}")()
-            amt = getattr(input, f"amount{i}")()
-            acc_amt += f"; {acc}:{amt:+}"
+        acc_amt = " ".join(
+            "{}{:+}".format(
+                getattr(input, f"account{i}")(), getattr(input, f"amount{i}")()
+            )
+            for i in range(1, account_ui_counter()[1] + 1)
+        )  # format: checking+8 savings-5
 
         # update cashflow_series
         cfs = cashflow_series()
-        if input.desc().lower() == "current":
-            cfs = cfs[cfs["desc"].str.lower() != "current"]
+        if input.desc().lower() == "balance":
+            cfs = cfs[cfs["desc"].str.lower() != "balance"]
         cashflow_series.set(
             pd.concat(
                 [
@@ -490,9 +569,7 @@ def server(input, output, session):
         ui.update_text("desc", value="")
         ui.update_selectize("account1", selected="checking")
         ui.update_numeric("amount1", value=0)
-        for i in range(2, account_ui_counter() + 1):
-            ui.remove_ui(f"account-row{i}")
-        account_ui_counter.set(1)
+        account_ui_counter.set((account_ui_counter()[1], 1))
         ui.update_action_button("delete_account_ui", disabled=True)
         ui.update_date("dtstart", value=date.today())
         ui.update_selectize("freq", selected="NEVER")
@@ -530,16 +607,17 @@ def server(input, output, session):
                     label=f"Set {column} Price",
                     value=get_stock_price(column[1:]),
                 )
+                break
 
     @render.text
     def freq_selected():
         return {
             "": "",
             "NEVER": "",
-            "DAILY": "days",
-            "WEEKLY": "weeks",
-            "MONTHLY": "months",
-            "YEARLY": "years",
+            "DAILY": " days",
+            "WEEKLY": " weeks",
+            "MONTHLY": " months",
+            "YEARLY": " years",
         }[input.freq()]
 
     @render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
@@ -549,49 +627,68 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.add_account_ui, ignore_none=False)
     def add_account_ui():
-        # ui.update_action_button("#delete_account_ui", disabled=False)
-        nex = account_ui_counter() + 1
-        ui.insert_ui(
-            ui.row(
-                ui.tooltip(
-                    ui.input_selectize(
-                        f"account{nex}",
-                        "Account",
-                        {
-                            "checking": "checking",
-                            "savings": "savings",
-                            "retirement": "retirement",
-                            "investment": "investment",
-                        },
-                        width="50%",
-                        remove_button=True,
-                        options={"placeholder": "Account name", "create": True},
-                    ),
-                    "Type $TICKER to add a stock",
-                ),
-                ui.input_numeric(f"amount{nex}", "Amount", 0, width="50%"),
-                id=f"account-row{nex}",
-            ),
-            "#add_delete_account_ui",
-            where="beforeBegin",
-        )
-        account_ui_counter.set(nex)
-        if nex > 1:
-            ui.update_action_button("delete_account_ui", disabled=False)
-        if nex == 1:
-            pass
-            # TODO shiny_validate delete_rule
-            # cfs_validator.add_rule(f"account{nex}", check.required())
-            # cfs_validator.add_rule(f"amount{nex}", check.required())  # integer?
+        curr = account_ui_counter()[1]
+        account_ui_counter.set((curr, curr + 1))
 
     @reactive.effect
     @reactive.event(input.delete_account_ui)
     def delete_account_ui():
-        cur = account_ui_counter()
-        ui.remove_ui(f"#account-row{cur}")
-        account_ui_counter.set(cur - 1)
-        if cur <= 2:
-            ui.update_action_button("delete_account_ui", disabled=True)
+        curr = account_ui_counter()[1]
+        account_ui_counter.set((curr, curr - 1))
+
+    @reactive.effect
+    def update_account_ui():
+        prev, curr = account_ui_counter()
+        if curr > prev:
+            assert curr == prev + 1
+            ui.insert_ui(
+                ui.row(
+                    ui.tooltip(
+                        ui.input_selectize(
+                            f"account{curr}",
+                            "Account",
+                            {
+                                "checking": "checking",
+                                "savings": "savings",
+                                "retirement": "retirement",
+                                "investment": "investment",
+                            },
+                            width="50%",
+                            remove_button=True,
+                            options={"placeholder": "Account name", "create": True},
+                        ),
+                        "Type $TICKER to add a stock",
+                        placement="top",
+                    ),
+                    ui.input_numeric(f"amount{curr}", "Amount in USD", 0, width="50%"),
+                    id=f"account-row{curr}",
+                ),
+                "#add_delete_account_ui",
+                where="beforeBegin",
+            )
+            if curr > 1:
+                ui.update_action_button("delete_account_ui", disabled=False)
+            # TODO only add if we can shiny_validate delete_rule
+            # cfs_validator.add_rule(f"account{nex}", check.required())
+            # cfs_validator.add_rule(f"amount{nex}", check.required())  # integer?
+
+            def update_amount_label():
+                if getattr(input, f"account{curr}")().startswith("$"):
+                    ui.update_numeric(f"amount{curr}", label="Amount in shares")
+                else:
+                    ui.update_numeric(f"amount{curr}", label="Amount in USD")
+
+            setattr(
+                server,
+                f"update_amount_label{curr}",
+                reactive.effect(update_amount_label),
+            )
+        elif curr < prev:
+            for i in range(curr + 1, prev + 1):
+                ui.remove_ui(f"#account-row{i}")
+                delattr(server, f"update_amount_label{i}")
+            if curr == 1:
+                ui.update_action_button("delete_account_ui", disabled=True)
 
     @reactive.effect
     @reactive.event(input.delete_all_cashflow_series)
@@ -602,9 +699,9 @@ def server(input, output, session):
     @reactive.event(input.delete_cashflow_series)
     def delete_cashflow_series():
         cfs = cashflow_series()
-        selected_rows = show_cashflow_series.cell_selection()["rows"]
-        if selected_rows:  # need to convert tuple to list
-            cashflow_series.set(cfs.drop(list(selected_rows)).reset_index(drop=True))
+        cfs_rows = show_cashflow_series.cell_selection()["rows"]
+        if cfs_rows:  # need to convert tuple to list
+            cashflow_series.set(cfs.drop(list(cfs_rows)).reset_index(drop=True))
 
     @reactive.effect
     @reactive.event(input.upload_cashflow_series)
@@ -612,11 +709,13 @@ def server(input, output, session):
         cashflow_series.set(pd.read_csv(input.upload_cashflow_series()[0]["datapath"]))
 
     @reactive.calc
-    def cashflow_forecast():
+    def cashflow_forecast() -> pd.DataFrame:
         cfs = cashflow_series().copy()
-        if len(cfs) == 0:
+        try:
+            assert len(cfs) != 0
+            after = datetime.fromisoformat(forecast_dtstart().iloc[0])
+        except (AssertionError, IndexError):
             return pd.DataFrame(columns=["date", "account", "desc"])
-        after = datetime.fromordinal(date.today().toordinal())
         before = datetime.fromordinal(input.forecast_dtend().toordinal())
         return generate_forecast(cfs, after, before, input.set_stock_price())
 
@@ -629,16 +728,20 @@ def server(input, output, session):
     def save_cashflow_series_edits():
         cashflow_series.set(show_cashflow_series.data_patched())
 
-    @render.plot
+    @reactive.effect
+    @reactive.event(input.discard_cashflow_series_edits)
+    def discard_cashflow_series_edits():
+        # TODO
+        pass  # cashflow_forecast_table()  # will discard data_patched()
+
+    # @render_plotly
+    @render.ui
     def cashflow_forecast_graph():
         df = cashflow_forecast()
-        if len(df) == 0:
-            return None
-        df = df.drop("desc", axis=1).set_index("date")
-        df.columns.name = "account"
-        p = sns.lineplot(df)
-        p.set_ylabel("amount")
-        return p
+        req(len(df) != 0)
+        f = StringIO()
+        df.drop("desc", axis=1).set_index("date").iplot(kind="overlay").write_html(f)
+        return ui.HTML(f.getvalue())
 
 
 app = App(app_ui, server)

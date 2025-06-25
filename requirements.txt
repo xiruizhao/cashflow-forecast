@@ -1,6 +1,9 @@
 dateutils
 pandas
 jinja2
-seaborn
+shinywidgets
 yfinance
 shiny_validate
+humanize
+quantmod
+plotly
