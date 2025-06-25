@@ -5,9 +5,11 @@ from io import StringIO
 from dateutil import rrule
 import humanize
 import pandas as pd
+
 # import plotly.express as px
 import quantmod.charts
 from shiny import App, render, ui, reactive, req
+
 # from shinywidgets import output_widget, render_plotly
 from shiny_validate import InputValidator, check
 import yfinance as yf
@@ -63,14 +65,16 @@ def generate_rrule(
     if freq == "NEVER":
         return "FREQ=DAILY;COUNT=1"  # ;INTERVAL=1
     else:
-        RRULE = f"FREQ={freq};INTERVAL={interval}"
+        RRULE = f"FREQ={freq}"
+        if interval > 1:
+            RRULE += f";INTERVAL={interval}"
         if freq == "WEEKLY":
             RRULE += f";BYDAY={','.join(byweekday_weekly)}"
         elif freq == "MONTHLY":
             if setpos_monthly == "True":
                 RRULE += f";BYSETPOS={bysetpos_monthly};BYDAY={byweekday_monthly}"
             else:
-                RRULE += f";BYMONTHDAY={bymonthday_monthly()}"
+                RRULE += f";BYMONTHDAY={bymonthday_monthly}"
         elif freq == "YEARLY":
             if setpos_yearly == "True":
                 RRULE += f";BYSETPOS={bysetpos_yearly};BYDAY={byweekday_yearly};BYMONTH={bymonth_bysetpos_yearly}"
@@ -288,7 +292,7 @@ repeat_end_ui = ui.TagList(
     ),
     ui.panel_conditional(
         "input.end == 'COUNT'",
-        ui.input_numeric("count", None, "1"),
+        ui.input_numeric("count", None, 1, min=1),
     ),
 )
 
@@ -310,7 +314,7 @@ repeat_ui = ui.TagList(
             "[ 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY' ].includes( input.freq )",
             ui.row(
                 ui.div("every", style="width:33%;"),
-                ui.input_numeric("interval", None, "1", width="33%"),
+                ui.input_numeric("interval", None, 1, min=1, width="33%"),
                 ui.div(
                     ui.output_text("freq_selected", inline=True), style="width:33%;"
                 ),
@@ -338,105 +342,92 @@ account_ui = ui.TagList(
     ),
 )
 
-app_ui = ui.page_fluid(
-    ui.layout_columns(
-        ui.accordion(
-            ui.accordion_panel(
-                "Add a Cash Flow Series",
-                ui.input_text(
-                    "desc",
-                    ui.popover(
-                        ui.span("Description ", question_circle_fill),
-                        "`balance` is a required special description that sets the forecast start date. "
-                        "`*_override`s are special descriptions that override specific dates of the prefix description.",
-                    ),
-                    placeholder="balance",
-                ),
-                ui.help_text(),
-                account_ui,
-                ui.input_date("dtstart", "Start Date"),
-                repeat_ui,
-                ui.hr(),
-                ui.input_action_button("add_cashflow_series", "Submit"),
-            )
+app_ui = ui.page_sidebar(
+    ui.sidebar(
+        "Add a Cash Flow Series",
+        ui.input_text(
+            "desc",
+            ui.popover(
+                ui.span("Description ", question_circle_fill),
+                "`balance` is a required special description that sets the forecast start date. "
+                "`*_override`s are special descriptions that override specific dates of the prefix description.",
+            ),
+            placeholder="balance",
         ),
-        ui.accordion(
-            ui.accordion_panel(
-                "Cash Flow Series",
-                ui.output_data_frame("show_cashflow_series"),
-                ui.row(
-                    ui.input_action_button(
-                        "save_cashflow_series_edits",
-                        "Save Edits",
-                        width="25%",
-                    ),
-                    ui.input_action_button(
-                        "discard_cashflow_series_edits",
-                        "Discard Edits",
-                        width="25%",
-                        disabled=True,
-                    ),
-                    ui.input_action_button(
-                        "delete_cashflow_series",
-                        "Delete Selected",
-                        width="25%",
-                    ),
-                    ui.input_action_button(
-                        "delete_all_cashflow_series",
-                        "Delete All",
-                        width="25%",
-                    ),
+        ui.help_text(),
+        account_ui,
+        ui.input_date("dtstart", "Start Date"),
+        repeat_ui,
+        ui.hr(),
+        ui.input_action_button("add_cashflow_series", "Submit"),
+        width="350px",
+    ),
+    ui.accordion(
+        ui.accordion_panel(
+            "Cash Flow Series",
+            ui.output_data_frame("show_cashflow_series"),
+            ui.row(
+                ui.input_action_button(
+                    "save_cashflow_series_edits",
+                    "Save Edits",
+                    width="12%",
                 ),
-                ui.p(),
-                ui.row(
-                    ui.input_file(
-                        "upload_cashflow_series",
-                        None,
-                        button_label="Upload",
-                        accept=[".csv"],
-                        width="50%",
-                    ),
-                    ui.download_button(
-                        "download_cashflow_series",
-                        "Download",
-                        width="50%",
-                    ),
+                ui.input_action_button(
+                    "delete_cashflow_series",
+                    "Delete Selected",
+                    width="12%",
+                ),
+                ui.input_action_button(
+                    "delete_all_cashflow_series",
+                    "Delete All",
+                    width="12%",
+                ),
+                ui.download_button(
+                    "download_cashflow_series",
+                    "Download",
+                    width="12%",
                 ),
             ),
+            ui.p(),
+            ui.input_file(
+                "upload_cashflow_series",
+                None,
+                button_label="Upload",
+                accept=[".csv"],
+                width="48%",
+            ),
         ),
-        ui.accordion(
-            ui.accordion_panel(
-                "Cash Flow Forecast",
-                ui.row(
-                    ui.output_text("show_forecast_dtstart"),
-                    ui.input_date(
-                        "forecast_dtend",
-                        "Forecast End Date",
-                        value=(date.today() + pd.DateOffset(years=2)).date(),
-                        startview="year",
-                        width="50%",
-                    ),
-                    # humanize.naturaltime(datetime.from)
-                    ui.input_switch("forecast_graph", "Graph", width="50%"),
+        ui.accordion_panel(
+            "Cash Flow Forecast",
+            ui.row(
+                ui.output_text("show_forecast_dtstart"),
+                ui.input_date(
+                    "forecast_dtend",
+                    "Forecast End Date",
+                    value=(date.today() + pd.DateOffset(years=2)).date(),
+                    startview="year",
+                    width="50%",
                 ),
-                ui.panel_conditional(
-                    "!input.forecast_graph",
-                    ui.output_data_frame("cashflow_forecast_table"),
-                ),
-                ui.panel_conditional(
-                    "input.forecast_graph",
-                    #output_widget("cashflow_forecast_graph"),
-                    ui.output_ui("cashflow_forecast_graph"),
-                ),
-                ui.input_numeric(
-                    "set_stock_price",
-                    "Set Stock Price",
-                    0,
-                ),
-                ui.help_text("default is last day close price"),
-            )
+                # humanize.naturaltime(datetime.from)
+                ui.input_switch("forecast_graph", "Graph", width="50%"),
+            ),
+            ui.panel_conditional(
+                "!input.forecast_graph",
+                ui.output_data_frame("cashflow_forecast_table"),
+            ),
+            ui.panel_conditional(
+                "input.forecast_graph",
+                # output_widget("cashflow_forecast_graph"),
+                ui.output_ui("cashflow_forecast_graph"),
+            ),
+            ui.input_numeric(
+                "set_stock_price",
+                "Set Stock Price",
+                0,
+                min=0,
+            ),
+            ui.help_text("default is last day close price"),
         ),
-        col_widths=(2, 4, 6),
     ),
     ui.tags.footer(
         "Disclaimer: Your data will be lost when you reload the page. Please download to save them."
@@ -455,9 +446,7 @@ def validate_rrule(rrulestr: str | None) -> str | None:
 
 def server(input, output, session):
     account_ui_counter = reactive.value((0, 0))  # prev, curr
-    cashflow_series = reactive.value(
-        pd.DataFrame(columns=["desc", "account", "dtstart", "rrule"])
-    )
+    cashflow_series = reactive.value(pd.read_csv("example.csv"))
     cfs_validator = InputValidator()
     cfs_validator.add_rule("dtstart", check.required())
     cfs_validator.add_rule("freq", check.required())
@@ -751,9 +740,9 @@ app = App(app_ui, server)
 # pre-populated examples
 # paycheck FREQ=WEEKLY;INTERVAL=2;BYDAY=FR
 # RSU FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=20
-# rent FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
-# credit card bill FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=10
-# flights FREQ=YEARLY;INTERVAL=1;BYMONTH=8;BYMONTHDAY=1
+# rent FREQ=MONTHLY;BYMONTHDAY=1
+# credit card bill FREQ=MONTHLY;BYMONTHDAY=10
+# flights FREQ=YEARLY;BYMONTH=8;BYMONTHDAY=1
 # TODO testing
 # https://shiny.posit.co/py/docs/unit-testing.html
 # https://shiny.posit.co/py/docs/end-to-end-testing.html
