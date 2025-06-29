@@ -1,7 +1,8 @@
-desc,account,dtstart,rrule
+desc,accounts,dtstart,rrule
 balance,checking+50 savings+100 retirement+100 $GOOG+5,2025-06-25,FREQ=DAILY;COUNT=1
 paycheck,checking+70 savings+140 retirement+30,2025-06-27,FREQ=WEEKLY;INTERVAL=2;BYDAY=FR
 rent,checking-100,2025-07-01,FREQ=MONTHLY;BYMONTHDAY=1
 creditcard,checking-60,2025-07-07,FREQ=MONTHLY;BYMONTHDAY=7
-rsu_100,$GOOG+25,2025-07-10,FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=10
+rsu_80,$GOOG+5,2025-07-10,FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=10
 creditcard_override,checking-120,2025-07-07,FREQ=DAILY;COUNT=1
+travel,savings-500,2025-06-01,FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=1

@@ -1,9 +1,13 @@
 humanize
 jinja2
 pandas
+pandera[pandas]
 python-dateutil
-quantmod
+quantmod # micropip.install: ValueError: Requested 'narwhals>=1.15.1', but narwhals==1.12.1 is already installed
 shiny
-#shinywidgets
 shiny_validate
-yfinance
+yfinance # micropip.install: ValueError: Can't find a pure Python 3 wheel for 'curl-cffi>=0.7'.
+
+# testing
+# pytest
+# pytest-playwright
