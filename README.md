@@ -1,8 +1,8 @@
-# Cash Flow Forecast
+# [Cash Flow Forecast](https://xiruizhao-cf.share.connect.posit.cloud)
 
 ## Use case
 
-1.  Based on my income and expenses, when will I be a millionaire?
+1.  Based on my income and expenses, when will I become a millionaire?
 2.  Will my checking account be overdrawn next month, given the paycheck deposits and credit card withdrawals?
 
 ## User guide
@@ -13,9 +13,10 @@
     3.  RSUs vesting
     4.  One time override whose name ends with `_override`, which overrides the cash flow with the same name
     5.  `balance` is a special entry. You can only have one `balance` entry and it sets the forecast start date.
-2.  Data storage
-    1.  Your user data is saved in the browser, so they should persist across sessions on the same browser.
-    2.  However, you should download the data just in case browser data is cleared.
+2.  Data storage/privacy
+    1.  Your user data is saved in the [browser](https://en.wikipedia.org/wiki/Web_storage), so they should persist across sessions on the same browser.
+    2.  You can export your data to another browser via `Copy Data as URL`. If your data is too big, you'll have to download it as a csv file and upload it in another browser.
+    3.  Your data is sent to the server for processing, but they are only accessed in memory and not saved to databases or files. When you close your browser window, nothing is preserved on the server.
 3.  Upload file
     1.  You can upload a previously downloaded `cashflow_series.csv` file. The format is fairly simple to allow manual editing if necessary.
 4.  Edit cash flow series
@@ -37,7 +38,7 @@ Inflation rate, interest rate and investment yield are ignored.
 
 The user data are saved in browser local storage and uploaded to the server for processing. They are not saved on the server.
 
-Built with [Shiny for Python](%22https://shiny.posit.co/py/%22). Hosted on [Posit Connect Cloud](https://connect.posit.cloud)
+Built with [Shiny for Python](https://shiny.posit.co/py/). Hosted on [Posit Connect Cloud](https://connect.posit.cloud)
 
 ### Server Processing of Cash Flow Series
 
@@ -51,3 +52,4 @@ Built with [Shiny for Python](%22https://shiny.posit.co/py/%22). Hosted on [Posi
 
 1.  Edit selected row in "Add Entry" sidebar UI
 2.  Parse bank app screenshots to update balance https://github.com/tesseract-ocr
+3.  [Shinylive](https://shiny.posit.co/py/get-started/shinylive.html) allows the python server to run completely in the browser, but yfinance/curl-cffi/quantmod are not available.

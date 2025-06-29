@@ -38,7 +38,7 @@ def required(val: str | int | float | tuple | date | None) -> str | None:
     - ui.input_text: str
     - ui.input_text_area: str
     - ui.input_password: str
-    all other ui.input_* are not applicable or unnecessary.
+    all other ui.input_* are inapplicable or unnecessary.
 
     this function is not the same as bool because bool
     - treats 0 as falsy
@@ -184,21 +184,18 @@ def split_accounts(accounts: str) -> dict[str, int | float]:
     return ret
 
 
-def get_stock_price(symbol: str) -> float:
+def get_stock_price(symbol: str, cache: dict[str, float]) -> float:
     # Yahoo Finance API https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d
     # Accessing the API with `requests` is blocked (liekly due to TLS handshake fingerprint)
     # yfinance uses `curl-cffi` which can masquerade as broswer
-    if symbol not in get_stock_price._cache:
+    if symbol not in cache:
         try:
-            get_stock_price._cache[symbol] = round(
+            cache[symbol] = round(
                 yf.Ticker(symbol).history(period="1d")["Close"].iloc[-1], 2
             )
         except (TypeError, ValueError) as e:
             logger.error(f"get_stock_price error {e}")
-    return get_stock_price._cache.get(symbol, 0.0)
-
-
-get_stock_price._cache = {}
+    return cache.get(symbol, 0.0)
 
 
 def sort_cfs(cfs: pd.DataFrame):
@@ -209,7 +206,8 @@ def sort_cfs(cfs: pd.DataFrame):
         key=lambda series: series.map(
             lambda desc: "\x00" + desc if desc == "balance" else desc
         ),
-    ).reset_index(drop=True, inplace=True)
+    )
+    cfs.reset_index(drop=True, inplace=True)
 
 
 def get_cashflow_series_upload(
@@ -225,9 +223,15 @@ def get_cashflow_series_upload(
         cfs = pd.read_csv(filepath_or_buffer)
         cfs["dtstart"] = cfs["dtstart"].map(date.fromisoformat)
         CashFlowSeriesSchema.validate(cfs)
-        sum(cfs["desc"] == "balance") <= 1
+        assert sum(cfs["desc"] == "balance") <= 1
         return cfs
-    except (AssertionError, KeyError, TypeError, ValueError, pa.errors.SchemaError) as e:
+    except (
+        AssertionError,
+        KeyError,
+        TypeError,
+        ValueError,
+        pa.errors.SchemaError,
+    ) as e:
         logger.error(f"get_cashflow_series_upload error {e}")
         return None
 

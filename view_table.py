@@ -7,6 +7,7 @@ from utils import (
 
 from datetime import date
 import logging
+import urllib
 
 import jinja2
 import pandas as pd
@@ -18,11 +19,22 @@ logger = logging.getLogger("cashflow")
 # https://github.com/posit-dev/py-shiny/blob/d656fdb213ea5e48bb54f6627445627e6e49f4b6/shiny/api-examples/session_send_custom_message/app-core.py#L4
 get_set_localstorage = jinja2.Template(
     """
-Shiny.initializedPromise.then(() => { 
+// handle data encoded in URL search params
+const params = new URLSearchParams(window.location.search);
+if (cfs = params.get("cfs")) {
+    localStorage.setItem("cashFlowSeries", cfs);
+    console.log("set localstorage from url search " + cfs);
+    window.location = window.location.origin;
+}
+Shiny.initializedPromise.then(() => {
     Shiny.setInputValue("{{inputid}}", localStorage.getItem("cashFlowSeries"));
     Shiny.addCustomMessageHandler("set_localstorage_cfs", function(message) {
         localStorage.setItem("cashFlowSeries", message);
-        // console.log(message);
+        console.log("set_localstorage_cfs with " + message);
+    });
+    Shiny.addCustomMessageHandler("copy_data_as_url", function(message) {
+        navigator.clipboard.writeText(window.location.origin + "/?cfs=" + message);
+        console.log("copy_data_as_url called with " + message);
     });
 });
 """
@@ -50,6 +62,11 @@ def view_table_ui() -> ui.TagList:
             ui.download_button(
                 "download_cashflow_series",
                 "Download",
+                width="200px",
+            ),
+            ui.input_action_button(
+                "copy_data_as_url",
+                "Copy Data as URL",
                 width="200px",
             ),
             ui.output_ui("load_example_csv_ui"),
@@ -97,20 +114,31 @@ def view_table_server(
 
     @reactive.effect
     def load_localstorage_cfs():
-        # fire once on load
+        # fired once
         localstorage_cfs = input.localstorage_cfs()
-        if not localstorage_cfs:  # empty string or not set (None)
-            return
-        cfs = get_cashflow_series_upload(localstorage_cfs, isfilepath=False)
-        if cfs is not None:
-            # no need to sort_cfs(cfs)
-            cashflow_series.set(cfs)
+        logger.info(f"load_localstorage_cfs {len(localstorage_cfs)} char")
+        if localstorage_cfs:
+            cfs = get_cashflow_series_upload(localstorage_cfs, isfilepath=False)
+            if cfs is not None:
+                logger.info("load_localstorage_cfs recover from previous")
+                # no need to sort_cfs(cfs)
+                cashflow_series.set(cfs)
+                return
+        logger.info(
+            "load_localstorage_cfs default init due to empty or invalid localstorage_cfs"
+        )
+        cashflow_series.set(
+            pd.DataFrame(columns=["desc", "accounts", "dtstart", "rrule"])
+        )
 
     @reactive.effect
     async def set_localstorage_cfs():
-        # assert input.localstorage_cfs() is not None
-        # should be fired after load_localstorage_cfs
+        # set_localstorage_cfs is fired for the initial value of cashflow_series()
+        # but this shouldn't affect load_localstorage_cfs because
+        # input.localstorage_cfs is set before the CustomMessageHandler for
+        # set_localstorage_cfs is added
         cfs = cashflow_series()
+        logger.info(f"set_localstorage_cfs {len(cfs)} row")
         await session.send_custom_message(
             "set_localstorage_cfs",
             cfs.to_csv(index=False),
@@ -118,9 +146,8 @@ def view_table_server(
 
     @render.data_frame
     def show_cashflow_series():
-        cfs = cashflow_series()
         # TODO edit via UI
-        return render.DataGrid(cfs, editable=True, selection_mode="row")
+        return render.DataGrid(cashflow_series(), editable=True, selection_mode="row")
 
     @show_cashflow_series.set_patch_fn
     def _(*, patch: render.CellPatch):
@@ -176,6 +203,22 @@ def view_table_server(
     @render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
     def download_cashflow_series():
         yield cashflow_series().to_csv(index=False)
+
+    @reactive.effect
+    @reactive.event(input.copy_data_as_url)
+    async def copy_data_as_url():
+        message = urllib.parse.quote(cashflow_series().to_csv(index=False))
+        logger.info(f"copy_data_as_url {len(message)}")
+        if len(message) >= 1900:
+            ui.notification_show(
+                "Your data is too big to be encoded in URL. Please download as a csv file."
+            )
+            return
+        # send to clipboard
+        await session.send_custom_message(
+            "copy_data_as_url",
+            message,
+        )
 
     @reactive.effect
     @reactive.event(input.delete_all_cashflow_series)

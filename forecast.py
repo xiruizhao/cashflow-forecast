@@ -15,12 +15,12 @@ logger = logging.getLogger("cashflow")
 
 
 @module.ui
-def stock_price_ui() -> ui.Tag:
+def stock_price_ui(stock_price_cache: dict[str, float]) -> ui.Tag:
     symbol = module.current_namespace().split("-")[-1]
     return ui.input_numeric(
         "stock_price",
         label=f"Set ${symbol} Price (default to last close)",
-        value=get_stock_price(symbol),
+        value=get_stock_price(symbol, stock_price_cache),
         min=0,
     )
 
@@ -75,6 +75,7 @@ def forecast_server(
     ] = reactive.value(dict())  # {symbol: (input, validator)}
     # we need stock_prices as a reactive.value to mediate cashflow_forecast's
     # dependency on all input.stock_price
+    stock_price_cache: dict[str, float] = {}  # per session cache
 
     @render.ui
     def set_stock_price_ui() -> ui.TagList:
@@ -85,7 +86,7 @@ def forecast_server(
                 symbol = acc_name[1:]
                 if not symbol.isalpha():
                     continue
-                ret.append(stock_price_ui(symbol))
+                ret.append(stock_price_ui(symbol, stock_price_cache))
                 price_inputs[symbol] = stock_price_server(symbol)
         stock_price_inputs.set(price_inputs)
         return ret

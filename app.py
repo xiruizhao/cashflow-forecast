@@ -10,9 +10,9 @@ import logging
 import pandas as pd
 from shiny import App, ui, reactive
 
-logging.basicConfig(level=logging.INFO)
-
 SHINY_MODULE_ID = "app"
+
+logging.basicConfig(level=logging.INFO)
 
 app_ui = ui.page_sidebar(
     ui.sidebar(
@@ -32,8 +32,11 @@ app_ui = ui.page_sidebar(
         ),
     ),
     ui.tags.footer(
+        ui.markdown(
+            "Edits you make are saved in your browser and not on the server.<br>"
+        ),
         ui.a(
-            ui.HTML("View Source Code on GitHub"),
+            "View User Guide and Source Code on GitHub",
             href="https://github.com/xiruizhao/cashflow-forecast",
         ),
     ),
