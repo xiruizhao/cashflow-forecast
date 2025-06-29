@@ -26,19 +26,31 @@ if (cfs = params.get("cfs")) {
     console.log("set localstorage from url search " + cfs);
     window.location = window.location.origin;
 }
+function copyDataAsUrl() {
+    if (cfs = localStorage.getItem("cashFlowSeries")) {
+        const params = new URLSearchParams({cfs: cfs});
+        console.log("copyDataAsUrl called with " + params.toString());
+        if (params.toString().length <= 1900) {
+            navigator.clipboard.writeText(window.location.origin + "/?" + params.toString());
+        }
+    }
+}
 Shiny.initializedPromise.then(() => {
-    Shiny.setInputValue("{{inputid}}", localStorage.getItem("cashFlowSeries"));
+    if (cfs = localStorage.getItem("cashFlowSeries")) {
+        Shiny.setInputValue("{{inputid}}", cfs);
+    }
     Shiny.addCustomMessageHandler("set_localstorage_cfs", function(message) {
         localStorage.setItem("cashFlowSeries", message);
         console.log("set_localstorage_cfs with " + message);
     });
-    Shiny.addCustomMessageHandler("copy_data_as_url", function(message) {
-        navigator.clipboard.writeText(window.location.origin + "/?cfs=" + message);
-        console.log("copy_data_as_url called with " + message);
-    });
 });
 """
 )
+
+
+def set_onclick(tag: ui.Tag, js: str) -> ui.Tag:
+    tag.attrs["onclick"] = js
+    return tag
 
 
 @module.ui
@@ -64,10 +76,13 @@ def view_table_ui() -> ui.TagList:
                 "Download",
                 width="200px",
             ),
-            ui.input_action_button(
-                "copy_data_as_url",
-                "Copy Data as URL",
-                width="200px",
+            set_onclick(
+                ui.input_action_button(
+                    "copy_data_as_url",
+                    "Copy Data as URL",
+                    width="200px",
+                ),
+                "copyDataAsUrl()",
             ),
             ui.output_ui("load_example_csv_ui"),
         ),
@@ -124,12 +139,6 @@ def view_table_server(
                 # no need to sort_cfs(cfs)
                 cashflow_series.set(cfs)
                 return
-        logger.info(
-            "load_localstorage_cfs default init due to empty or invalid localstorage_cfs"
-        )
-        cashflow_series.set(
-            pd.DataFrame(columns=["desc", "accounts", "dtstart", "rrule"])
-        )
 
     @reactive.effect
     async def set_localstorage_cfs():
@@ -203,22 +212,29 @@ def view_table_server(
     @render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
     def download_cashflow_series():
         yield cashflow_series().to_csv(index=False)
+        """
+        // alternative client side js:
+        if (cfs = localStorage.getItem("cashFlowSeries")) {
+            const elem = window.document.createElement('a');
+            elem.href = URL.createObjectURL(new Blob([cfs], {type: 'text/csv', oneTimeOnly: true}));
+            elem.download = 'cashflow_series.csv';
+            elem.display = 'none';
+            document.body.appendChild(elem);
+            elem.click();
+            document.body.removeChild(elem);
+        }
+        """
 
     @reactive.effect
     @reactive.event(input.copy_data_as_url)
-    async def copy_data_as_url():
+    def copy_data_as_url():
         message = urllib.parse.quote(cashflow_series().to_csv(index=False))
         logger.info(f"copy_data_as_url {len(message)}")
         if len(message) >= 1900:
             ui.notification_show(
                 "Your data is too big to be encoded in URL. Please download as a csv file."
             )
-            return
-        # send to clipboard
-        await session.send_custom_message(
-            "copy_data_as_url",
-            message,
-        )
+        # javascript handles copying to clipboard
 
     @reactive.effect
     @reactive.event(input.delete_all_cashflow_series)

@@ -33,7 +33,7 @@ app_ui = ui.page_sidebar(
     ),
     ui.tags.footer(
         ui.markdown(
-            "Edits you make are saved in your browser and not on the server.<br>"
+            "Your edits are saved in your browser and not on the server.<br>"
         ),
         ui.a(
             "View User Guide and Source Code on GitHub",

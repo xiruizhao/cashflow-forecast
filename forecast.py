@@ -102,15 +102,19 @@ def forecast_server(
         dtstart = forecast_dtstart()
         if len(dtstart) == 0:
             return ui.markdown("Forecast Start Date:<br>Please add a `balance` entry")
-        return ui.markdown(
-            "Forecast Start Date:<br>"
-            + dtstart.iloc[0].isoformat()
-            + " "
-            + humanize.naturaltime(
-                datetime.fromordinal(dtstart.iloc[0].toordinal()),
-                when=datetime.fromordinal(date.today().toordinal()),
+        else:
+            dtstart = dtstart.iloc[0]
+            # update dtend
+            ui.update_date("forecast_dtend", value=dtstart + relativedelta(years=2))
+            return ui.markdown(
+                "Forecast Start Date:<br>"
+                + dtstart.isoformat()
+                + " "
+                + humanize.naturaltime(
+                    datetime.fromordinal(dtstart.toordinal()),
+                    when=datetime.fromordinal(date.today().toordinal()),
+                )
             )
-        )
 
     @reactive.calc
     def cashflow_forecast() -> pd.DataFrame:
