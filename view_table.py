@@ -79,9 +79,9 @@ def view_table_server(
         ui.markdown(
             """The file should be a csv file with columns `desc`, `accounts`, `dtstart`, `rrule`<br>
         `desc` is a nonempty string (there should be exactly one entry whose `desc` is `balance`)<br>
-        `accounts` is formatted like `paycheck+8 savings-5 $GOOG+8`<br>
+        `accounts` is formatted like `paycheck+8 savings-5 $GOOG+8` (account name cannot be "desc", "accounts", "activity", "date", or "sum") <br>
         `dtstart` is formatted like "2025-12-31"<br>
-        `rrule` is a RFC5545 (iCalendar) RRULE"""
+        `rrule` is an RFC5545 (iCalendar) RRULE except SECONDLY, MINUTELY, HOURLY repeats are not allowed"""
         ),
         title="Error: file has incorrect format",
         easy_close=True,
@@ -167,8 +167,8 @@ def view_table_server(
         return patch["value"]  # since we reset cashflow_series, return as is
 
     # previous download_button reactor:
-    #@render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
-    #def download_cashflow_series():
+    # @render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
+    # def download_cashflow_series():
     #    cfs = cashflow_series()
     #    req(cfs is not None)
     #    logger.info(module.resolve_id("download_cashflow_series"))
@@ -189,8 +189,7 @@ def view_table_server(
         cfs_rows: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
         req(cfs is not None and len(cfs) > 0 and len(cfs_rows) > 0)
         logger.info(f"{module.resolve_id('delete_cashflow_series')} {cfs_rows}")
-        # row number is index
-        cfs = cfs.drop(list(cfs_rows))  # create a copy
+        cfs = cfs.drop(index=list(cfs_rows))  # create a copy
         sort_cfs(cfs)
         cashflow_series.set(cfs)
 
@@ -207,4 +206,4 @@ def view_table_server(
         else:
             ui.modal_show(invalid_upload)
 
-    return cashflow_series_table # edit via UI
+    return cashflow_series_table  # edit via UI

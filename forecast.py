@@ -16,11 +16,13 @@ logger = logging.getLogger(__file__)
 
 
 @module.ui
-def stock_price_ui(stock_price_cache: dict[str, float]) -> ui.Tag:
-    symbol = module.current_namespace().split("-")[-1]
+def stock_price_ui(symbol: str, stock_price_cache: dict[str, float]) -> ui.Tag:
     return ui.input_numeric(
         "stock_price",
-        label=f"Set ${symbol} Price (default to last close)",
+        label=ui.div(
+            f"Set ${symbol} Price (default: last day close)",
+            ui.input_action_button("reset_stock_price", "Reset"),
+        ).add_class("d-flex"),
         value=get_stock_price(symbol, stock_price_cache),
         min=0,
     )
@@ -28,10 +30,21 @@ def stock_price_ui(stock_price_cache: dict[str, float]) -> ui.Tag:
 
 @module.server
 def stock_price_server(
-    input: shiny.Inputs, output: shiny.Outputs, session: shiny.Session
+    input: shiny.Inputs,
+    output: shiny.Outputs,
+    session: shiny.Session,
+    symbol: str,
+    stock_price_cache: dict[str, float],
 ) -> tuple[reactive.Value[int | float | None], InputValidator]:
     validator = InputValidator()
     validator.add_rule("stock_price", required)
+
+    @reactive.effect
+    @reactive.event(input.reset_stock_price)
+    def reset_stock_price():
+        ui.update_numeric(
+            "stock_price", value=get_stock_price(symbol, stock_price_cache)
+        )
 
     return input.stock_price, validator
 
@@ -75,9 +88,7 @@ def forecast_server(
     logger.info(module.resolve_id("forecast_server"))
     stock_price_inputs: reactive.Value[
         dict[str, tuple[reactive.Value[int | float | None], InputValidator]]
-    ] = reactive.value(
-        dict()
-    )  # {symbol: (input, validator)}
+    ] = reactive.value(dict())  # {symbol: (input, validator)}
     # we need stock_prices as a reactive.value to mediate cashflow_forecast's
     # dependency on all input.stock_price
     stock_price_cache: dict[str, float] = {}  # per session cache
@@ -92,8 +103,10 @@ def forecast_server(
                 symbol = acc_name[1:]
                 if not symbol.isalpha():
                     continue
-                ret.append(stock_price_ui(symbol, stock_price_cache))
-                price_inputs[symbol] = stock_price_server(symbol)
+                ret.append(stock_price_ui(symbol, symbol, stock_price_cache))
+                price_inputs[symbol] = stock_price_server(
+                    symbol, symbol, stock_price_cache
+                )
         stock_price_inputs.set(price_inputs)
         return ret
 
@@ -144,7 +157,8 @@ def forecast_server(
                 validator.enable()
                 req(validator.is_valid())
                 cfs[column] = (cfs[column] * price_input()).round(2)
-        return cfs
+        cfs["sum"] = cfs.drop(columns="activity").sum(axis=1)
+        return cfs.reset_index()  # restore date column
 
     @render.data_frame
     def cashflow_forecast_table():
@@ -157,5 +171,5 @@ def forecast_server(
         logger.info(module.resolve_id("cashflow_forecast_graph"))
         df = cashflow_forecast()
         f = StringIO()
-        df.drop("desc", axis=1).set_index("date").iplot(kind="overlay").write_html(f)
+        df.drop(columns=["activity", "sum"]).iplot(kind="overlay").write_html(f)
         return ui.HTML(f.getvalue())

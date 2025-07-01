@@ -274,8 +274,8 @@ def split_accounts(accounts: str) -> dict[str, int | float]:
                 amt = "-" + amt
             else:
                 return {}
-            if name in ret:
-                # duplicate account name not allowed
+            if name in ret or name in ["desc", "accounts", "activity", "date", "sum"]:
+                # duplicate account name and special column names not allowed
                 return {}
             if "." in amt:
                 ret[name] = round(float(amt), 2)
@@ -348,10 +348,11 @@ def generate_forecast(
         lambda row: generate_occurences(row, after, before),
         axis=1,
     )
-    cfs = cfs.drop(["dtstart", "rrule"], axis=1).explode("date")
-    cfs = cfs[cfs["date"].notna()]  # due to empty lists
+    cfs = cfs.drop(columns=["dtstart", "rrule"]).explode("date")
+    cfs = cfs[cfs["date"].notna()]  # due to empty lists (expired or future events)
 
     # 2. process *_override
+    # make sure regular has unique row nnumber as index
     regular = cfs[~cfs["desc"].str.endswith("_override")].reset_index(drop=True)
     overrides = cfs[cfs["desc"].str.endswith("_override")]
 
@@ -367,24 +368,24 @@ def generate_forecast(
 
     cfs = pd.concat([regular, overrides.apply(process_override, axis=1)], axis=0)
 
-    # 3. concat desc_account on date
-    cfs["desc_accounts"] = cfs["desc"].str.cat(cfs["accounts"], sep=": ")
-    cfs_desc_account = cfs.groupby("date")["desc_accounts"].apply("; ".join)
+    # 3. combine desc and account keyed on date
+    # groupby implicitly set_index("date")
+    cfs_activity = cfs.groupby("date")[["desc", "accounts"]].apply(
+        lambda _df: "; ".join(_df["desc"].str.cat(_df["accounts"], sep=": "))
+    )
 
     # 4. calculate amount on date
-    cfs.drop("desc_accounts", axis=1, inplace=True)
-    cfs["accounts"] = cfs["accounts"].map(split_accounts)
     cfs = (
-        cfs["accounts"]
+        cfs.set_index("date")["accounts"]
+        .map(split_accounts)
         .apply(pd.Series)
         .fillna(0)
-        .set_index(cfs["date"])
         .sort_index()
         .cumsum()
+        .reset_index()  # restore date as column so we can drop duplicates
+        .drop_duplicates(subset="date", keep="last")
         .round(2)
-        .reset_index()
-        .drop_duplicates(subset=["date"], keep="last")
         .set_index("date")
     )
-    cfs["desc"] = cfs_desc_account
-    return cfs.reset_index()
+    cfs["activity"] = cfs_activity
+    return cfs
