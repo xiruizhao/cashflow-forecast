@@ -1,3 +1,4 @@
+from constants import BYMONTHDAY_MONTHLY_CHOICES, BYWEEKDAY_ORD_CHOICES
 from datetime import datetime, date
 from io import StringIO
 import logging
@@ -27,10 +28,20 @@ class CashFlowSeriesSchema(pa.DataFrameModel):
         return ~series.map(validate_rrule).map(bool)
 
 
-def required(val: str | int | float | tuple | date | None) -> str | None:
+def required(
+    val: (
+        str
+        | int
+        | float
+        | tuple[str, ...]
+        | tuple[date | None, date | None]
+        | date
+        | None
+    ),
+) -> str | None:
     """
     applicable to (as of shiny 1.4.0):
-    - ui.input_seletize : str | tuple[str]
+    - ui.input_seletize : str | tuple[str, ...]
     - ui.input_date: date | None,
     - ui.input_date_range: tuple[date | None, date | None]
     - ui.input_checkbox: tuple[str]
@@ -65,78 +76,169 @@ def integer(val: int | float | None) -> str | None:
 def validate_rrule(rrulestr: str | None) -> str | None:
     """returns an error string if ValueError"""
     try:
-        rrule.rrulestr(rrulestr)
-    except ValueError:
-        return "invalid RRULE"
+        for invalid in [
+            "FREQ=SECONDLY",
+            "FREQ=MINUTELY",
+            "FREQ=HOURLY",
+            "BYHOUR=",
+            "BYMINUTE=",
+            "BYSECOND=",
+        ]:
+            assert invalid not in rrulestr
+        rrule_obj = rrule.rrulestr(rrulestr)
+        assert not rrule_obj._byeaster  # dateutil.rrule extension
+    except (AssertionError, ValueError):
+        return "invalid rrulestr"
     return None
 
 
-def generate_rrule(
+def generate_rrulestr(
+    *,
     validator: InputValidator,
-    freq: str = "",
-    interval: int | float | None = None,
+    freq: str = "NEVER",
+    interval: int | float | None = 1,
     byweekday_weekly: tuple[str] = tuple(),
-    setpos_monthly: bool = False,
-    bysetpos_monthly: str = "",
-    byweekday_monthly: str = "",
-    bymonthday_monthly: str = "",
-    setpos_yearly: bool = False,
-    bysetpos_yearly: str = "",
-    byweekday_yearly: str = "",
-    bymonth_bysetpos_yearly: str = "",
-    bymonth_yearly: str = "",
-    bymonthday_yearly: str = "",
-    end: str = "",
+    onday_monthly: str = "monthday",
+    byweekday_ord_monthly: str = "1",
+    byweekday_monthly: str = "MO",
+    bymonthday_monthly: str = "1",
+    onday_yearly: str = "monthday",
+    byweekday_ord_yearly: str = "1",
+    byweekday_yearly: str = "MO",
+    bymonth_byweekday_yearly: str = "1",
+    bymonth_yearly: str = "1",
+    bymonthday_yearly: str = "1",
+    end: str = "NEVER",
     until: date | None = None,
-    count: int | float | None = None,
+    count: int | float | None = 1,
 ) -> str:
     validator.add_rule("freq", required)
     req(validator.is_valid())
     if freq == "NEVER":
         return "FREQ=DAILY;COUNT=1"  # ;INTERVAL=1
     else:
-        RRULE = f"FREQ={freq}"
+        rrulestr = f"FREQ={freq}"
         validator.add_rule("interval", integer)
         req(validator.is_valid())
         if interval > 1:
-            RRULE += f";INTERVAL={interval}"
+            rrulestr += f";INTERVAL={interval}"
         if freq == "WEEKLY":
             validator.add_rule("byweekday_weekly", required)
             req(validator.is_valid())
-            RRULE += f";BYDAY={','.join(byweekday_weekly)}"
+            rrulestr += f";BYDAY={','.join(byweekday_weekly)}"
         elif freq == "MONTHLY":
-            if setpos_monthly == "True":
-                validator.add_rule("bysetpos_monthly", required)
+            if onday_monthly == "weekday":
+                validator.add_rule("byweekday_ord_monthly", required)
                 validator.add_rule("byweekday_monthly", required)
                 req(validator.is_valid())
-                RRULE += f";BYSETPOS={bysetpos_monthly};BYDAY={byweekday_monthly}"
+                rrulestr += f";BYDAY={byweekday_ord_monthly}{byweekday_monthly}"
             else:
                 validator.add_rule("bymonthday_monthly", required)
                 req(validator.is_valid())
-                RRULE += f";BYMONTHDAY={bymonthday_monthly}"
+                rrulestr += f";BYMONTHDAY={bymonthday_monthly}"
         elif freq == "YEARLY":
-            if setpos_yearly == "True":
-                validator.add_rule("bysetpos_yearly", required)
+            if onday_yearly == "weekday":
+                validator.add_rule("byweekday_ord_yearly", required)
                 validator.add_rule("byweekday_yearly", required)
-                validator.add_rule("bymonth_bysetpos_yearly", required)
+                validator.add_rule("bymonth_byweekday_yearly", required)
                 req(validator.is_valid())
-                RRULE += f";BYSETPOS={bysetpos_yearly};BYDAY={byweekday_yearly};BYMONTH={bymonth_bysetpos_yearly}"
+                rrulestr += f";BYDAY={byweekday_ord_yearly}{byweekday_yearly};BYMONTH={bymonth_byweekday_yearly}"
             else:
                 validator.add_rule("bymonth_yearly", required)
                 validator.add_rule("bymonthday_yearly", required)
                 req(validator.is_valid())
-                RRULE += f";BYMONTH={bymonth_yearly};BYMONTHDAY={bymonthday_yearly}"
+                rrulestr += f";BYMONTH={bymonth_yearly};BYMONTHDAY={bymonthday_yearly}"
         # nothing for freq == "DAILY"
         if end == "UNTIL":
             validator.add_rule("until", required)
             req(validator.is_valid())
-            RRULE += ";UNTIL=" + until.strftime("%Y%m%dT0000Z")
+            rrulestr += ";UNTIL=" + until.strftime("%Y%m%dT0000Z")
         elif end == "COUNT":
             validator.add_rule("count", integer)
             req(validator.is_valid())
-            RRULE += f";COUNT={count}"
+            rrulestr += f";COUNT={count}"
         # nothing for end == "Never"
-        return RRULE
+        return rrulestr
+
+
+def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, str]:
+    rrule_obj = rrule.rrulestr(rrulestr)
+    if (
+        rrule_obj._wkst
+        or rrule_obj._bysetpos
+        or rrule_obj._byyearday
+        or rrule_obj._byweekno
+    ):
+        return None, "advanced_repeat"
+
+    # checklist: BYDAY (_byweekday, _bynweekday), BYMONTHDAY (_bymonthday, _bynmonthdat), BYMONTH
+    if rrule_obj._freq == rrule.WEEKLY:
+        if (
+            not rrule_obj._byweekday
+            or rrule_obj._bynweekday
+            or rrule_obj._bymonthday
+            or rrule_obj._bynmonthday
+            or rrule_obj._bymonth
+        ):
+            return None, "advanced_repeat"
+        else:
+            return rrule_obj, "byweekday_weekly"
+
+    if rrule_obj._freq == rrule.MONTHLY:
+        if rrule_obj._byweekday or rrule_obj._bymonth:
+            # _bynmonthday is allowed because -2, -1
+            return None, "advanced_repeat"
+
+        if rrule_obj._bymonthday or rrule_obj._bynmonthday:  # 1 to 28, or -2, -1
+            if (
+                rrule_obj._bynweekday
+                or rrule_obj._bymonthday
+                and (
+                    len(rrule_obj._bymonthday) > 1
+                    or str(rrule_obj._bymonthday[0])
+                    not in BYMONTHDAY_MONTHLY_CHOICES.keys()
+                )
+                or rrule_obj._bynmonthday
+                and (
+                    len(rrule_obj._bynmonthday) > 1
+                    or str(rrule_obj._bynmonthday[0])
+                    not in BYMONTHDAY_MONTHLY_CHOICES.keys()
+                )
+            ):
+                return None, "advanced_repeat"
+            return rrule_obj, "bymonthday_monthly"
+
+        if rrule_obj._bynweekday:
+            if (
+                len(rrule_obj._bynweekday) > 1
+                or str(rrule_obj._bynweekday[0][1]) not in BYWEEKDAY_ORD_CHOICES.keys()
+            ):
+                return None, "advanced_repeat"
+            return rrule_obj, "byweekday_monthly"
+
+        return None, "advanced_repeat"
+
+    # YEARLY
+    if (
+        rrule_obj._byweekday
+        or rrule_obj._bynmonthday
+        or not rrule_obj._bymonth
+        or len(rrule_obj._bymonth) > 1
+    ):
+        # only _bynweekday or _bymonthday
+        return None, "advanced_repeat"
+
+    if rrule_obj._bymonthday:
+        if len(rrule_obj._bymonthday) > 1 or rrule_obj._bynweekday:
+            return None, "advanced_repeat"
+        return rrule_obj, "bymonthday_yearly"
+
+    if rrule_obj._bynweekday:
+        if len(rrule_obj._bynweekday) > 1:
+            return None, "advanced_repeat"
+        return rrule_obj, "byweekday_yearly"
+
+    return None, "advanced_repeat"
 
 
 def generate_occurences(
@@ -211,7 +313,7 @@ def sort_cfs(cfs: pd.DataFrame):
 
 
 def get_cashflow_series_upload(
-    filepath_or_content: str, isfilepath=True
+    filepath_or_content: str, isfilepath: bool = True
 ) -> pd.DataFrame | None:
     if not isfilepath:
         filepath_or_buffer = StringIO()

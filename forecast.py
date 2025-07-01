@@ -8,10 +8,11 @@ from dateutil.relativedelta import relativedelta
 import humanize
 import pandas as pd
 import quantmod.charts  # noqa: F401
+import shiny
 from shiny import module, ui, render, reactive, req
 from shiny_validate import InputValidator
 
-logger = logging.getLogger("cashflow")
+logger = logging.getLogger(__file__)
 
 
 @module.ui
@@ -27,7 +28,7 @@ def stock_price_ui(stock_price_cache: dict[str, float]) -> ui.Tag:
 
 @module.server
 def stock_price_server(
-    input, output, session
+    input: shiny.Inputs, output: shiny.Outputs, session: shiny.Session
 ) -> tuple[reactive.Value[int | float | None], InputValidator]:
     validator = InputValidator()
     validator.add_rule("stock_price", required)
@@ -37,6 +38,7 @@ def stock_price_server(
 
 @module.ui
 def forecast_ui() -> ui.TagList:
+    logger.info(module.resolve_id("forecast_ui"))
     return ui.TagList(
         ui.row(
             ui.output_ui("show_forecast_dtstart"),
@@ -64,23 +66,27 @@ def forecast_ui() -> ui.TagList:
 
 @module.server
 def forecast_server(
-    input,
-    output,
-    session,
+    input: shiny.Inputs,
+    output: shiny.Outputs,
+    session: shiny.Session,
     cashflow_series: reactive.Value[pd.DataFrame],
     cfs_acc_names: reactive.Value[set[str]],
 ):
+    logger.info(module.resolve_id("forecast_server"))
     stock_price_inputs: reactive.Value[
         dict[str, tuple[reactive.Value[int | float | None], InputValidator]]
-    ] = reactive.value(dict())  # {symbol: (input, validator)}
+    ] = reactive.value(
+        dict()
+    )  # {symbol: (input, validator)}
     # we need stock_prices as a reactive.value to mediate cashflow_forecast's
     # dependency on all input.stock_price
     stock_price_cache: dict[str, float] = {}  # per session cache
 
     @render.ui
     def set_stock_price_ui() -> ui.TagList:
+        logger.info(module.resolve_id("set_stock_price_ui"))
         ret = ui.TagList()
-        price_inputs = {}
+        price_inputs: dict[str, reactive.Value[int | float | None]] = {}
         for acc_name in cfs_acc_names():
             if acc_name.startswith("$"):
                 symbol = acc_name[1:]
@@ -93,12 +99,15 @@ def forecast_server(
 
     @reactive.calc
     def forecast_dtstart() -> pd.Series:
-        # use iloc[0] to get dtstart
         cfs = cashflow_series()
+        req(cfs is not None)
+        logger.info(module.resolve_id("forecast_dtstart"))
+        # use iloc[0] to get dtstart
         return cfs[cfs["desc"] == "balance"]["dtstart"]
 
     @render.ui
     def show_forecast_dtstart() -> ui.Tag:
+        logger.info(module.resolve_id("show_forecast_dtstart"))
         dtstart = forecast_dtstart()
         if len(dtstart) == 0:
             return ui.markdown("Forecast Start Date:<br>Please add a `balance` entry")
@@ -118,9 +127,13 @@ def forecast_server(
 
     @reactive.calc
     def cashflow_forecast() -> pd.DataFrame:
-        cfs = cashflow_series().copy()
-        req(len(cfs) != 0 and len(forecast_dtstart()) == 1)
-        after = datetime.fromordinal(forecast_dtstart().iloc[0].toordinal())
+        cfs = cashflow_series()
+        dtstart = forecast_dtstart()
+        req(cfs is not None and len(cfs) > 0 and len(dtstart) == 1)
+        cfs = cfs.copy()
+
+        logger.info(module.resolve_id("cashflow_forecast"))
+        after = datetime.fromordinal(dtstart.iloc[0].toordinal())
         before = datetime.fromordinal(input.forecast_dtend().toordinal())
         cfs = generate_forecast(cfs, after, before)
         price_inputs = stock_price_inputs()
@@ -134,12 +147,14 @@ def forecast_server(
         return cfs
 
     @render.data_frame
-    def cashflow_forecast_table() -> render.DataGrid:
+    def cashflow_forecast_table():
+        logger.info(module.resolve_id("cashflow_forecast_table"))
         return render.DataGrid(cashflow_forecast())
 
     # @render_plotly clips the graph
     @render.ui
     def cashflow_forecast_graph() -> ui.HTML:
+        logger.info(module.resolve_id("cashflow_forecast_graph"))
         df = cashflow_forecast()
         f = StringIO()
         df.drop("desc", axis=1).set_index("date").iplot(kind="overlay").write_html(f)

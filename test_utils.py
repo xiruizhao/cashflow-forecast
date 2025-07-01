@@ -1,5 +1,5 @@
 from utils import (
-    generate_rrule,
+    generate_rrulestr,
     validate_rrule,
     split_accounts,
     get_stock_price,
@@ -38,7 +38,7 @@ class _TestCase(NamedTuple):
     ret: str = ""
 
 
-def test_generate_rrule():
+def test_generate_rrulestr():
     validator = Mock()
     validator.is_valid.return_value = True
     test_cases = [
@@ -72,7 +72,7 @@ def test_generate_rrule():
         ),
     ]
     for testcase in test_cases:
-        assert generate_rrule(**testcase.kwargs) == testcase.ret
+        assert generate_rrulestr(**testcase.kwargs) == testcase.ret
 
 
 def test_validate_rrule():
