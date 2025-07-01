@@ -90,12 +90,14 @@ def server(input: shiny.Inputs, output: shiny.Outputs, session: shiny.Session):
             )
         )
 
-    table_selected_row = view_table_server(SHINY_MODULE_ID, cashflow_series)
+    cashflow_series_table = view_table_server(
+        SHINY_MODULE_ID, cashflow_series
+    )
     add_entry_server(
         SHINY_MODULE_ID,
         cashflow_series,
         cfs_acc_names,
-        table_selected_row,
+        cashflow_series_table,
         input.add_entry_sidebar,
     )
     forecast_server(SHINY_MODULE_ID, cashflow_series, cfs_acc_names)

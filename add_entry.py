@@ -325,7 +325,7 @@ def add_entry_server(
     session: shiny.Session,
     cashflow_series: reactive.Value[pd.DataFrame | None],
     cfs_acc_names: reactive.Calc_[set[str]],
-    table_selected_row: reactive.Value[render.CellSelection | None],
+    cashflow_series_table,
     add_entry_sidebar_open: reactive.Value[bool],
 ):
     logger.info(module.resolve_id("add_entry_server"))
@@ -413,9 +413,11 @@ def add_entry_server(
 
     @reactive.effect
     @reactive.event(input.reset_ui)
-    def reset_ui():
+    async def reset_ui():
         logger.info(module.resolve_id("reset_ui"))
         _reset_ui()
+        if cashflow_series_table.cell_selection()["rows"]:
+            await cashflow_series_table.update_cell_selection(None)
 
     @reactive.effect
     @reactive.event(input.add_cashflow_series)
@@ -463,7 +465,7 @@ def add_entry_server(
         )  # format: checking+8 savings-5
 
         # add entry to cashflow_series
-        selected_row: tuple[int, ...] = table_selected_row()["rows"]
+        selected_row: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
         if input.desc().lower() == "balance":
             logger.info(
                 module.resolve_id("add_cashflow_series") + " drop previous balance"
@@ -475,6 +477,7 @@ def add_entry_server(
                 f"{module.resolve_id('add_cashflow_series')} drop selected row {selected_row}"
             )
             cfs = cfs.drop(selected_row[0])
+            # no need to update_cell_selection since table will be refreshed
         cfs = pd.concat(
             [
                 cfs,
@@ -521,12 +524,12 @@ def add_entry_server(
         ui.update_text("custom_rrule", value="")
 
     @reactive.effect
-    @reactive.event(table_selected_row, add_entry_sidebar_open)
+    @reactive.event(cashflow_series_table.cell_selection, add_entry_sidebar_open)
     def edit_row():
         cfs = cashflow_series()
         req(cfs is not None and len(cfs) > 0 and add_entry_sidebar_open())
 
-        row_index: tuple[int, ...] = table_selected_row()["rows"]
+        row_index: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
 
         if not row_index:
             logger.info(module.resolve_id("edit_row") + " deselct")

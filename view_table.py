@@ -26,7 +26,7 @@ def add_onclick(tag: ui.Tag, onclick: str) -> ui.Tag:
 def view_table_ui() -> ui.TagList:
     logger.info(module.resolve_id("view_table_ui"))
     return ui.TagList(
-        ui.output_data_frame("show_cashflow_series"),
+        ui.output_data_frame("cashflow_series_table"),
         ui.help_text("Hold CMD/CTRL and click to deselect a row"),
         ui.row(
             ui.input_action_button(
@@ -63,8 +63,7 @@ def view_table_ui() -> ui.TagList:
             None,
             button_label="Upload",
             accept=[".csv"],
-            # width="750px",
-        ).add_class("col-auto"),
+        ),
     )
 
 
@@ -107,13 +106,13 @@ def view_table_server(
         cashflow_series.set(cfs)
 
     @render.data_frame
-    def show_cashflow_series():
+    def cashflow_series_table():
         cfs = cashflow_series()
         req(cfs is not None)
-        logger.info(module.resolve_id("show_cashflow_series"))
+        logger.info(module.resolve_id("cashflow_series_table"))
         return render.DataGrid(cfs, editable=True, selection_mode="row")
 
-    @show_cashflow_series.set_patch_fn
+    @cashflow_series_table.set_patch_fn
     def edit_cell(*, patch: render.CellPatch):
         cfs = cashflow_series()
         req(cfs is not None and len(cfs) > 0)
@@ -167,6 +166,7 @@ def view_table_server(
                 return orig_value
         return patch["value"]  # since we reset cashflow_series, return as is
 
+    # previous download_button reactor:
     #@render.download(filename=f"cashflow_series_{date.today().isoformat()}.csv")
     #def download_cashflow_series():
     #    cfs = cashflow_series()
@@ -186,7 +186,7 @@ def view_table_server(
     @reactive.event(input.delete_cashflow_series)
     def delete_cashflow_series():
         cfs = cashflow_series()
-        cfs_rows: tuple[int, ...] = show_cashflow_series.cell_selection()["rows"]
+        cfs_rows: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
         req(cfs is not None and len(cfs) > 0 and len(cfs_rows) > 0)
         logger.info(f"{module.resolve_id('delete_cashflow_series')} {cfs_rows}")
         # row number is index
@@ -207,4 +207,4 @@ def view_table_server(
         else:
             ui.modal_show(invalid_upload)
 
-    return show_cashflow_series.cell_selection  # edit via UI
+    return cashflow_series_table # edit via UI

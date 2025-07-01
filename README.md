@@ -16,7 +16,9 @@
 2.  Data storage and privacy
     1.  Your user data is saved in the [browser](https://en.wikipedia.org/wiki/Web_storage), so they should persist across sessions on the same browser.
     2.  You can export your data to another browser via `Copy Data as URL`. If your data is too big, you'll have to download it as a csv file and upload it in another browser.
-    3.  Your data is sent to the server for processing, but they are only accessed in memory and not saved to databases or files. When you close your browser window, nothing is preserved on the server.
+    3.  Click a row to edit it on the sidebar or directly edit it in the table.
+    4.  Your data is sent to the server for processing, but they are only accessed in memory and not saved to databases or files. When you close your browser window, nothing is preserved on the server.
+
 
 ### Caveats
 
@@ -44,6 +46,6 @@ Built with [Shiny for Python](https://shiny.posit.co/py/). Hosted on [Posit Conn
 
 ### TODO
 
-1.  Edit selected row in "Add Entry" sidebar UI
-2.  Parse bank app screenshots to update `balance` and `*_override` https://github.com/tesseract-ocr
-3.  [Shinylive](https://shiny.posit.co/py/get-started/shinylive.html) allows the python server to run completely in the browser, but yfinance/curl-cffi/quantmod are not available.
+1.  Parse bank app screenshots to update `balance` and `*_override` https://github.com/tesseract-ocr
+2.  [Shinylive](https://shiny.posit.co/py/get-started/shinylive.html) allows the python server to run completely in the browser, but yfinance/curl-cffi/quantmod are not available.
+3.  More tests.
