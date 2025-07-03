@@ -3,7 +3,9 @@ from view_table import view_table_ui, view_table_server
 from forecast import forecast_ui, forecast_server
 from utils import split_accounts, get_cashflow_series_upload
 
+import base64
 import functools
+import gzip
 import operator
 import logging
 
@@ -73,26 +75,42 @@ def server(input: shiny.Inputs, output: shiny.Outputs, session: shiny.Session):
     async def set_localstorage_cfs():
         cfs = cashflow_series()
         req(cfs is not None)
+        # to please the type checker since req() does not narrow type
+        assert cfs is not None
         logger.info(f"set_localstorage_cfs {len(cfs)} row")
         await session.send_custom_message(
             "set_localstorage_cfs",
-            cfs.to_csv(index=False),
+            base64.urlsafe_b64encode(
+                gzip.compress(cfs.to_csv(index=False).encode("utf-8"))
+            ).decode(
+                "utf-8"
+            ),  # pyright: ignore[reportArgumentType]
         )
+        # send_custom_message's type hint should've been
+        # JsonSerializable = (
+        # dict[str, "JsonSerializable"]
+        # | list["JsonSerializable"]
+        # | tuple["JsonSerializable"]
+        # | str
+        # | int
+        # | float
+        # | bool
+        # | None
+        # )
 
     @reactive.calc
     def cfs_acc_names() -> set[str]:
         cfs = cashflow_series()
         req(cfs is not None)
+        assert cfs is not None # to please the type checker
         logger.info("cfs_acc_names")
         return set(
             functools.reduce(
-                operator.or_, cashflow_series()["accounts"].map(split_accounts), {}
+                operator.or_, cfs["accounts"].map(split_accounts), {}
             )
         )
 
-    cashflow_series_table = view_table_server(
-        SHINY_MODULE_ID, cashflow_series
-    )
+    cashflow_series_table = view_table_server(SHINY_MODULE_ID, cashflow_series)
     add_entry_server(
         SHINY_MODULE_ID,
         cashflow_series,

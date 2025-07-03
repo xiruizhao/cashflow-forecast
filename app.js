@@ -1,13 +1,19 @@
+// @ts-check
+
 // handle data encoded in URL search params
 const params = new URLSearchParams(window.location.search);
-if (cfs = params.get("cfs")) {
+const cfs = params.get("cfs")
+if (cfs) {
     localStorage.setItem("cashFlowSeries", cfs);
     console.log("set localstorage from url search " + cfs.length);
-    window.location = window.location.origin;
+    window.location.href = window.location.origin;
 }
 
 function copyDataAsUrl() {
-    if (cfs = localStorage.getItem("cashFlowSeries")) {
+    const cfs = localStorage.getItem("cashFlowSeries");
+    if (cfs) {
+        // cashFlowSeries is python base64.urlsafe_b64encode-ed gzip.compress-ed csv
+        // use URLSearchParams to ensure "=" is URL-encoded.
         const params = new URLSearchParams({ cfs: cfs });
         console.log("copyDataAsUrl " + params.toString().length);
         const dataUrl = window.location.origin + "/?" + params.toString();
@@ -20,14 +26,16 @@ function copyDataAsUrl() {
 }
 
 function downloadDataAsCsv() {
-    if (cfs = localStorage.getItem("cashFlowSeries")) {
+    const cfs = localStorage.getItem("cashFlowSeries");
+    if (cfs) {
         const elem = window.document.createElement('a');
-        elem.href = URL.createObjectURL(new Blob([cfs], { type: 'text/csv', oneTimeOnly: true }));
+        elem.href = URL.createObjectURL(new Blob([cfs], { type: 'text/csv' }));
         elem.download = `cashflow_series_${(new Date()).toISOString().split('T')[0]}.csv`;
-        elem.display = 'none';
+        elem.style.display = 'none';
         document.body.appendChild(elem);
         elem.click();
         document.body.removeChild(elem);
+        URL.revokeObjectURL(elem.href);
     }
 }
 

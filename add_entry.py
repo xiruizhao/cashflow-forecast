@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportPrivateImportUsage=false
 from constants import (
     question_circle_fill,
     BYWEEKDAY_ORD_CHOICES,
@@ -19,6 +20,7 @@ from utils import (
     required,
     sort_cfs,
     split_accounts,
+    RruleType,
 )
 
 from datetime import date
@@ -325,7 +327,7 @@ def add_entry_server(
     session: shiny.Session,
     cashflow_series: reactive.Value[pd.DataFrame | None],
     cfs_acc_names: reactive.Calc_[set[str]],
-    cashflow_series_table,
+    cashflow_series_table: render.data_frame[pd.DataFrame],
     add_entry_sidebar_open: reactive.Value[bool],
 ):
     logger.info(module.resolve_id("add_entry_server"))
@@ -424,6 +426,7 @@ def add_entry_server(
     def add_cashflow_series():
         cfs = cashflow_series()
         req(cfs is not None)
+        assert cfs is not None  # to please the type checker
         logger.info(module.resolve_id("add_cashflow_series"))
 
         cfs_validator = InputValidator()
@@ -460,12 +463,13 @@ def add_entry_server(
             accountmod.input_validator.enable()
             req(accountmod.input_validator.is_valid())
         accounts = " ".join(
-            f"{accountmod.input_acc_name()}{round(accountmod.input_acc_amt(), 2):+}"
+            f"{accountmod.input_acc_name()}{round(accountmod.input_acc_amt(), 2):+}"  # pyright: ignore[reportCallIssue, reportArgumentType]
             for accountmod in accountmods
         )  # format: checking+8 savings-5
 
         # add entry to cashflow_series
-        selected_row: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
+        selected_row = cashflow_series_table.cell_selection()["rows"]
+        assert isinstance(selected_row, tuple)  # tuple[int, ...]
         if input.desc().lower() == "balance":
             logger.info(
                 module.resolve_id("add_cashflow_series") + " drop previous balance"
@@ -493,8 +497,8 @@ def add_entry_server(
         )
         sort_cfs(cfs)
         cashflow_series.set(cfs)
-        _reset_ui()
         cfs_validator.disable()
+        _reset_ui()
 
     def _reset_ui(create_account0: bool = True):
         logger.info(module.resolve_id("reset_ui"))
@@ -508,7 +512,7 @@ def add_entry_server(
         ui.update_date("dtstart", value=date.today())
         ui.update_selectize("freq", selected="NEVER")
         ui.update_numeric("interval", value=1)
-        ui.update_checkbox("byweekday_weekly", value=tuple())
+        ui.update_checkbox_group("byweekday_weekly", selected=tuple())
         ui.update_radio_buttons("onday_monthly", selected="monthday")
         ui.update_selectize("bymonthday_monthly", selected="1")
         ui.update_selectize("byweekday_ord_monthly", selected="1")
@@ -528,9 +532,10 @@ def add_entry_server(
     def edit_row():
         cfs = cashflow_series()
         req(cfs is not None and len(cfs) > 0 and add_entry_sidebar_open())
+        assert cfs is not None  # to please the type checker
 
-        row_index: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
-
+        row_index = cashflow_series_table.cell_selection()["rows"]
+        assert isinstance(row_index, tuple)  # tuple[int, ...]
         if not row_index:
             logger.info(module.resolve_id("edit_row") + " deselct")
             _reset_ui()
@@ -555,10 +560,11 @@ def add_entry_server(
                 # ui.update_selectize("freq", selected="NEVER")
                 return
             rrule_obj, rrule_type = parse_rrulestr(row["rrule"])
-            if rrule_type == "advanced_repeat":
+            if rrule_type == RruleType.ADVANCED:
                 ui.update_switch("advanced_repeat", value=True)
                 ui.update_text("custom_rrule", value=row["rrule"])
                 return
+            assert rrule_obj is not None  # to please the type checker
             ui.update_selectize(
                 "freq", selected=RRULE_FREQ_ENUM_TO_STR[rrule_obj._freq]
             )
@@ -572,14 +578,16 @@ def add_entry_server(
             else:
                 ui.update_radio_buttons("end", selected="NEVER")
 
-            if rrule_type == "byweekday_weekly":
-                ui.update_checkbox(
+            if rrule_type == RruleType.DAILY:
+                pass
+            elif rrule_type == RruleType.BYWEEKDAY_WEEKLY:
+                ui.update_checkbox_group(
                     "byweekday_weekly",
-                    value=[
+                    selected=[
                         WEEKDAY_NUM_TO_ABBR_STR[day] for day in rrule_obj._byweekday
                     ],
                 )
-            elif rrule_type == "bymonthday_monthly":
+            elif rrule_type == RruleType.BYMONTHDAY_MONTHLY:
                 # ui.update_radio_buttons("onday_monthly", selected="monthly")
                 monthday = (
                     str(rrule_obj._bymonthday[0])
@@ -587,7 +595,7 @@ def add_entry_server(
                     else str(rrule_obj._bynmonthday[0])
                 )
                 ui.update_selectize("bymonthday_monthy", selected=monthday)
-            elif rrule_type == "byweekday_monthly":
+            elif rrule_type == RruleType.BYWEEKDAY_MONTHLY:
                 ui.update_radio_buttons("onday_monthly", selected="weekday")
                 ui.update_selectize(
                     "byweekday_ord_monthly",
@@ -597,7 +605,7 @@ def add_entry_server(
                     "byweekday_monthly",
                     selected=WEEKDAY_NUM_TO_ABBR_STR[rrule_obj._bynweekday[0][0]],
                 )
-            elif rrule_type == "bymonthday_yearly":
+            elif rrule_type == RruleType.BYMONTHDAY_YEARLY:
                 # ui.update_radio_buttons("onday_yearly", selected="monthday")
                 ui.update_selectize(
                     "bymonth_yearly", selected=str(rrule_obj._bymonth[0])
@@ -605,7 +613,7 @@ def add_entry_server(
                 ui.update_selectize(
                     "bymonthday_yearly", selected=str(rrule_obj._bymonthday[0])
                 )
-            else:  # byweekday_yearly
+            elif rrule_type == RruleType.BYWEEKDAY_YEARLY:
                 ui.update_radio_buttons("onday_yearly", selected="weekday")
                 ui.update_selectize(
                     "byweekday_ord_yearly",
@@ -619,3 +627,5 @@ def add_entry_server(
                     "bymonth_byweekday_yearly",
                     selected=str(rrule_obj._bymonth[0]),
                 )
+            else:
+                assert False, "Unknown RruleType"

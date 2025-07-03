@@ -82,13 +82,17 @@ def forecast_server(
     input: shiny.Inputs,
     output: shiny.Outputs,
     session: shiny.Session,
-    cashflow_series: reactive.Value[pd.DataFrame],
-    cfs_acc_names: reactive.Value[set[str]],
+    cashflow_series: reactive.Value[pd.DataFrame | None],
+    cfs_acc_names: reactive.Calc_[  # pyright: ignore[reportPrivateImportUsage]
+        set[str]
+    ],
 ):
     logger.info(module.resolve_id("forecast_server"))
     stock_price_inputs: reactive.Value[
         dict[str, tuple[reactive.Value[int | float | None], InputValidator]]
-    ] = reactive.value(dict())  # {symbol: (input, validator)}
+    ] = reactive.value(
+        dict()
+    )  # {symbol: (input, validator)}
     # we need stock_prices as a reactive.value to mediate cashflow_forecast's
     # dependency on all input.stock_price
     stock_price_cache: dict[str, float] = {}  # per session cache
@@ -97,7 +101,9 @@ def forecast_server(
     def set_stock_price_ui() -> ui.TagList:
         logger.info(module.resolve_id("set_stock_price_ui"))
         ret = ui.TagList()
-        price_inputs: dict[str, reactive.Value[int | float | None]] = {}
+        price_inputs: dict[
+            str, tuple[reactive.Value[int | float | None], InputValidator]
+        ] = {}
         for acc_name in cfs_acc_names():
             if acc_name.startswith("$"):
                 symbol = acc_name[1:]
@@ -114,12 +120,13 @@ def forecast_server(
     def forecast_dtstart() -> pd.Series:
         cfs = cashflow_series()
         req(cfs is not None)
+        assert cfs is not None  # to please the type checker
         logger.info(module.resolve_id("forecast_dtstart"))
         # use iloc[0] to get dtstart
         return cfs[cfs["desc"] == "balance"]["dtstart"]
 
     @render.ui
-    def show_forecast_dtstart() -> ui.Tag:
+    def show_forecast_dtstart() -> ui.HTML:
         logger.info(module.resolve_id("show_forecast_dtstart"))
         dtstart = forecast_dtstart()
         if len(dtstart) == 0:
@@ -143,6 +150,7 @@ def forecast_server(
         cfs = cashflow_series()
         dtstart = forecast_dtstart()
         req(cfs is not None and len(cfs) > 0 and len(dtstart) == 1)
+        assert cfs is not None  # to please the type checker
         cfs = cfs.copy()
 
         logger.info(module.resolve_id("cashflow_forecast"))
@@ -152,11 +160,14 @@ def forecast_server(
         price_inputs = stock_price_inputs()
         # 5. convert stock shares to prices
         for column in cfs:
+            assert isinstance(column, str)  # to please the type checker
             if column.startswith("$"):
                 price_input, validator = price_inputs[column[1:]]
                 validator.enable()
                 req(validator.is_valid())
-                cfs[column] = (cfs[column] * price_input()).round(2)
+                stock_price = price_input()
+                assert stock_price is not None  # to please the type checker
+                cfs[column] = (cfs[column] * stock_price).round(2)
         cfs["sum"] = cfs.drop(columns="activity").sum(axis=1)
         return cfs.reset_index()  # restore date column
 
@@ -171,5 +182,7 @@ def forecast_server(
         logger.info(module.resolve_id("cashflow_forecast_graph"))
         df = cashflow_forecast()
         f = StringIO()
-        df.drop(columns=["activity", "sum"]).iplot(kind="overlay").write_html(f)
+        df.drop(columns=["activity", "sum"]).set_index("date").iplot(
+            kind="overlay"
+        ).write_html(f) # pyright: ignore[reportCallIssue]
         return ui.HTML(f.getvalue())

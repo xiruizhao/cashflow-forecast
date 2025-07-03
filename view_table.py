@@ -73,7 +73,7 @@ def view_table_server(
     output: shiny.Outputs,
     session: shiny.Session,
     cashflow_series: reactive.Value[pd.DataFrame | None],
-) -> Callable[[], render.CellSelection]:
+) -> render.data_frame[pd.DataFrame]:
     logger.info(module.resolve_id("view_table_server"))
     invalid_upload = ui.modal(
         ui.markdown(
@@ -102,6 +102,7 @@ def view_table_server(
     def load_example_csv():
         logger.info(module.resolve_id("load_example_csv"))
         cfs = get_cashflow_series_upload("example.csv")
+        assert cfs is not None
         sort_cfs(cfs)
         cashflow_series.set(cfs)
 
@@ -109,6 +110,7 @@ def view_table_server(
     def cashflow_series_table():
         cfs = cashflow_series()
         req(cfs is not None)
+        assert cfs is not None  # to please the type checker
         logger.info(module.resolve_id("cashflow_series_table"))
         return render.DataGrid(cfs, editable=True, selection_mode="row")
 
@@ -116,9 +118,11 @@ def view_table_server(
     def edit_cell(*, patch: render.CellPatch):
         cfs = cashflow_series()
         req(cfs is not None and len(cfs) > 0)
+        assert cfs is not None  # to please the type checker
         logger.info(f"{module.resolve_id('edit_cell')} {patch}")
         cfs = cfs.copy()
         orig_value = cfs.iat[patch["row_index"], patch["column_index"]]
+        assert isinstance(patch["value"], str)  # to please the type checker
         if patch["column_index"] == 0:  # desc
             if len(patch["value"]) > 0:
                 cfs.iat[patch["row_index"], 0] = patch["value"]
@@ -179,15 +183,18 @@ def view_table_server(
     def delete_all_cashflow_series():
         cfs = cashflow_series()
         req(cfs is not None and len(cfs) > 0)
+        assert cfs is not None  # to please the type checker
         logger.info(module.resolve_id("delete_all_cashflow_series"))
-        cashflow_series.set(cashflow_series()[0:0])
+        cashflow_series.set(cfs[0:0])
 
     @reactive.effect
     @reactive.event(input.delete_cashflow_series)
     def delete_cashflow_series():
         cfs = cashflow_series()
-        cfs_rows: tuple[int, ...] = cashflow_series_table.cell_selection()["rows"]
+        cfs_rows = cashflow_series_table.cell_selection()["rows"]
+        assert isinstance(cfs_rows, tuple) # tuple[int, ...]
         req(cfs is not None and len(cfs) > 0 and len(cfs_rows) > 0)
+        assert cfs is not None  # to please the type checker
         logger.info(f"{module.resolve_id('delete_cashflow_series')} {cfs_rows}")
         cfs = cfs.drop(index=list(cfs_rows))  # create a copy
         sort_cfs(cfs)
@@ -198,6 +205,7 @@ def view_table_server(
     def upload_cashflow_series():
         file: list[FileInfo] | None = input.upload_cashflow_series()
         req(file is not None)
+        assert file is not None  # to please the type checker
         logger.info(module.resolve_id("upload_cashflow_series"))
         cfs = get_cashflow_series_upload(file[0]["datapath"])
         if cfs is not None:

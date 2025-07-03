@@ -133,13 +133,13 @@ def test_get_cashflow_series_upload():
 
 def test_generate_forecast():
     df = generate_forecast(
-        get_cashflow_series_upload("example.csv"),
+        get_cashflow_series_upload("example.csv"), # pyright: ignore[reportArgumentType]
         datetime(2025, 6, 24),
         datetime(2026, 6, 24),
     )
     lastrow = df.iloc[-1]
-    assert lastrow["date"] == date(2026, 6, 12)
+    assert lastrow.name == date(2026, 6, 12)
     assert lastrow["checking"] == -110
     assert lastrow["savings"] == 3240
     assert lastrow["retirement"] == 880
-    assert lastrow["desc"] == "paycheck: checking+70 savings+140 retirement+30"
+    assert lastrow["activity"] == "paycheck: checking+70 savings+140 retirement+30"

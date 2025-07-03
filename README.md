@@ -1,4 +1,8 @@
-# [Cash Flow Forecast](https://xiruizhao-cf.share.connect.posit.cloud)
+# Cash Flow Forecast
+
+Short URL: xirui.me/cf
+
+Full URL: https://xiruizhao-cf.share.connect.posit.cloud
 
 ## Use case
 

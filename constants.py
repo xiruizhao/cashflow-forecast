@@ -25,7 +25,8 @@ BYMONTHDAY_YEARLY_28_CHOICES = {str(i): str(i) for i in range(1, 29)}
 BYWEEKDAY_ABBR_CHOICES = {day[:2].upper(): day for day in calendar.day_abbr}
 WEEKDAY_NUM_TO_ABBR_STR = [day[:2].upper() for day in calendar.day_abbr]
 BYWEEKDAY_CHOICES = {day[:2].upper(): day for day in calendar.day_name}
-BYMONTH_CHOICES = dict(list(enumerate(calendar.month_abbr))[1:])
+# drop the first (0, '') from month_abbr
+BYMONTH_CHOICES = dict([(str(i), val) for i, val in enumerate(calendar.month_abbr)][1:])
 
 DEFAULT_ACC_NAMES = set(
     [

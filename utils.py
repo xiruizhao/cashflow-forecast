@@ -1,9 +1,13 @@
+# pyright: reportAttributeAccessIssue=false
+import base64
 from constants import BYMONTHDAY_MONTHLY_CHOICES, BYWEEKDAY_ORD_CHOICES
 from datetime import datetime, date
+import gzip
 from io import StringIO
 import logging
 
 from dateutil import rrule
+import enum
 import pandas as pd
 import pandera.pandas as pa
 from shiny import req
@@ -14,7 +18,7 @@ logger = logging.getLogger("cashflow")
 
 
 class CashFlowSeriesSchema(pa.DataFrameModel):
-    desc: str = pa.Field(str_length=1)
+    desc: str = pa.Field(str_length={"min_value": 1})
     accounts: str = pa.Field()
     dtstart: date = pa.Field()
     rrule: str = pa.Field()
@@ -26,6 +30,16 @@ class CashFlowSeriesSchema(pa.DataFrameModel):
     @pa.check("rrule")
     def validate_rrule(cls, series: pd.Series) -> pd.Series:
         return ~series.map(validate_rrule).map(bool)
+
+
+class RruleType(enum.Enum):
+    DAILY = enum.auto()
+    BYWEEKDAY_WEEKLY = enum.auto()
+    BYWEEKDAY_MONTHLY = enum.auto()
+    BYWEEKDAY_YEARLY = enum.auto()
+    BYMONTHDAY_MONTHLY = enum.auto()
+    BYMONTHDAY_YEARLY = enum.auto()
+    ADVANCED = enum.auto()
 
 
 def required(
@@ -75,6 +89,8 @@ def integer(val: int | float | None) -> str | None:
 
 def validate_rrule(rrulestr: str | None) -> str | None:
     """returns an error string if ValueError"""
+    if rrulestr is None:
+        return "Required"
     try:
         for invalid in [
             "FREQ=SECONDLY",
@@ -86,7 +102,7 @@ def validate_rrule(rrulestr: str | None) -> str | None:
         ]:
             assert invalid not in rrulestr
         rrule_obj = rrule.rrulestr(rrulestr)
-        assert not rrule_obj._byeaster  # dateutil.rrule extension
+        assert not rrule_obj._byeaster # dateutil.rrule extension
     except (AssertionError, ValueError):
         return "invalid rrulestr"
     return None
@@ -95,7 +111,7 @@ def validate_rrule(rrulestr: str | None) -> str | None:
 def generate_rrulestr(
     *,
     validator: InputValidator,
-    freq: str = "NEVER",
+    freq: str = "NEVER", # input_selectize, could be empty string but not None
     interval: int | float | None = 1,
     byweekday_weekly: tuple[str] = tuple(),
     onday_monthly: str = "monthday",
@@ -120,6 +136,7 @@ def generate_rrulestr(
         rrulestr = f"FREQ={freq}"
         validator.add_rule("interval", integer)
         req(validator.is_valid())
+        assert interval is not None # to please the type checker
         if interval > 1:
             rrulestr += f";INTERVAL={interval}"
         if freq == "WEEKLY":
@@ -152,6 +169,7 @@ def generate_rrulestr(
         if end == "UNTIL":
             validator.add_rule("until", required)
             req(validator.is_valid())
+            assert until is not None  # to please the type checker
             rrulestr += ";UNTIL=" + until.strftime("%Y%m%dT0000Z")
         elif end == "COUNT":
             validator.add_rule("count", integer)
@@ -161,17 +179,31 @@ def generate_rrulestr(
         return rrulestr
 
 
-def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, str]:
+def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, RruleType]:
     rrule_obj = rrule.rrulestr(rrulestr)
+    if isinstance(rrule_obj, rrule.rruleset):
+        return None, RruleType.ADVANCED
+    
     if (
         rrule_obj._wkst
         or rrule_obj._bysetpos
         or rrule_obj._byyearday
         or rrule_obj._byweekno
     ):
-        return None, "advanced_repeat"
+        return None, RruleType.ADVANCED
 
     # checklist: BYDAY (_byweekday, _bynweekday), BYMONTHDAY (_bymonthday, _bynmonthdat), BYMONTH
+    if rrule_obj._freq == rrule.DAILY:
+        if (
+            rrule_obj._byweekday
+            or rrule_obj._bynweekday
+            or rrule_obj._bymonthday
+            or rrule_obj._bynmonthday
+            or rrule_obj._bymonth
+        ):
+            return None, RruleType.ADVANCED
+        return rrule_obj, RruleType.DAILY
+
     if rrule_obj._freq == rrule.WEEKLY:
         if (
             not rrule_obj._byweekday
@@ -180,14 +212,14 @@ def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, str]:
             or rrule_obj._bynmonthday
             or rrule_obj._bymonth
         ):
-            return None, "advanced_repeat"
+            return None, RruleType.ADVANCED
         else:
-            return rrule_obj, "byweekday_weekly"
+            return rrule_obj, RruleType.BYWEEKDAY_WEEKLY
 
     if rrule_obj._freq == rrule.MONTHLY:
         if rrule_obj._byweekday or rrule_obj._bymonth:
             # _bynmonthday is allowed because -2, -1
-            return None, "advanced_repeat"
+            return None, RruleType.ADVANCED
 
         if rrule_obj._bymonthday or rrule_obj._bynmonthday:  # 1 to 28, or -2, -1
             if (
@@ -205,18 +237,18 @@ def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, str]:
                     not in BYMONTHDAY_MONTHLY_CHOICES.keys()
                 )
             ):
-                return None, "advanced_repeat"
-            return rrule_obj, "bymonthday_monthly"
+                return None, RruleType.ADVANCED
+            return rrule_obj, RruleType.BYMONTHDAY_MONTHLY
 
         if rrule_obj._bynweekday:
             if (
                 len(rrule_obj._bynweekday) > 1
                 or str(rrule_obj._bynweekday[0][1]) not in BYWEEKDAY_ORD_CHOICES.keys()
             ):
-                return None, "advanced_repeat"
-            return rrule_obj, "byweekday_monthly"
+                return None, RruleType.ADVANCED
+            return rrule_obj, RruleType.BYWEEKDAY_MONTHLY
 
-        return None, "advanced_repeat"
+        return None, RruleType.ADVANCED
 
     # YEARLY
     if (
@@ -226,19 +258,19 @@ def parse_rrulestr(rrulestr: str) -> tuple[rrule.rrule | None, str]:
         or len(rrule_obj._bymonth) > 1
     ):
         # only _bynweekday or _bymonthday
-        return None, "advanced_repeat"
+        return None, RruleType.ADVANCED
 
     if rrule_obj._bymonthday:
         if len(rrule_obj._bymonthday) > 1 or rrule_obj._bynweekday:
-            return None, "advanced_repeat"
-        return rrule_obj, "bymonthday_yearly"
+            return None, RruleType.ADVANCED
+        return rrule_obj, RruleType.BYMONTHDAY_YEARLY
 
     if rrule_obj._bynweekday:
         if len(rrule_obj._bynweekday) > 1:
-            return None, "advanced_repeat"
-        return rrule_obj, "byweekday_yearly"
+            return None, RruleType.ADVANCED
+        return rrule_obj, RruleType.BYWEEKDAY_WEEKLY
 
-    return None, "advanced_repeat"
+    return None, RruleType.ADVANCED
 
 
 def generate_occurences(
@@ -316,6 +348,10 @@ def get_cashflow_series_upload(
     filepath_or_content: str, isfilepath: bool = True
 ) -> pd.DataFrame | None:
     if not isfilepath:
+        if not filepath_or_content.startswith("desc,accounts,dtstart,rrule"):
+            filepath_or_content = gzip.decompress(
+                base64.urlsafe_b64decode(filepath_or_content.encode("utf-8"))
+            ).decode("utf-8")
         filepath_or_buffer = StringIO()
         filepath_or_buffer.write(filepath_or_content)
         filepath_or_buffer.seek(0)
@@ -332,7 +368,7 @@ def get_cashflow_series_upload(
         KeyError,
         TypeError,
         ValueError,
-        pa.errors.SchemaError,
+        pa.errors.SchemaError, # pyright: ignore[reportPrivateImportUsage]]
     ) as e:
         logger.error(f"get_cashflow_series_upload error {e}")
         return None
